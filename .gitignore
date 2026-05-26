@@ -1,5 +1,12 @@
 node_modules/
 dist/
 .env
+.env.local
 *.db
 *.db-journal
+.vite
+.DS_Store
+uploads
+release
+coverage
+dist-electron

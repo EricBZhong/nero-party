@@ -1,14 +1,28 @@
 {
   "name": "nero-party",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:backend": "cd backend && npm run dev",
-    "dev:frontend": "cd frontend && npm run dev",
-    "install": "cd backend && npm install && cd ../frontend && npm install"
+    "predev": "npm run build --workspace @nero/shared && npm run build --workspace @nero/player",
+    "dev": "concurrently -n server,web -c green,cyan \"npm run dev --workspace @nero/server\" \"npm run dev --workspace @nero/web\"",
+    "dev:web": "npm run dev --workspace @nero/web",
+    "dev:server": "npm run dev --workspace @nero/server",
+    "dev:desktop": "npm run dev --workspace @nero/desktop",
+    "dev:discord": "npm run dev --workspace @nero/discord-bot",
+    "build": "npm run build --workspace @nero/shared && npm run build --workspace @nero/player && npm run build --workspace @nero/server && npm run build --workspace @nero/web && npm run build --workspace @nero/discord-bot && npm run build --workspace @nero/desktop",
+    "typecheck": "npm run build --workspace @nero/shared && npm run build --workspace @nero/player && npm run typecheck --workspace @nero/server && npm run typecheck --workspace @nero/web && npm run typecheck --workspace @nero/discord-bot && npm run typecheck --workspace @nero/desktop",
+    "test": "npm run test --workspace @nero/shared && npm run test --workspace @nero/player && npm run test --workspace @nero/server",
+    "prisma:generate": "npm run prisma:generate --workspace @nero/server",
+    "prisma:migrate": "npm run prisma:migrate --workspace @nero/server",
+    "prisma:push": "npm run prisma:push --workspace @nero/server"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "typescript": "^5.6.3"
   }
 }

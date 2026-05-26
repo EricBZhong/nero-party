@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  displayName String
+  discordId  String?  @unique
+  createdAt   DateTime @default(now())
+
+  participants Participant[]
+}
+
+model Party {
+  id        String      @id @default(cuid())
+  code      String      @unique
+  title     String
+  mode      String      @default("focus")
+  status    String      @default("lobby")
+  settings  String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  participants Participant[]
+  tracks       Track[]
+  playback     PlaybackState?
+  reactions    Reaction[]
+  ballots      Ballot[]
+  eventLogs    EventLog[]
+  spotify      SpotifyConnection?
+  listenerSpotifyConnections ListenerSpotifyConnection[]
+}
+
+model Participant {
+  id          String            @id @default(cuid())
+  partyId     String
+  userId      String?
+  displayName String
+  role        String
+  source      String            @default("web")
+  token       String            @unique
+  isPresent   Boolean           @default(true)
+  audioReady  Boolean           @default(false)
+  joinedAt    DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  party        Party          @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  tracks       Track[]
+  reactions    Reaction[]
+  savedTracks  SavedTrack[]
+  rankings     RankingEntry[]
+  ballots      Ballot[]
+  spotifyConnection ListenerSpotifyConnection?
+}
+
+model Track {
+  id                       String          @id @default(cuid())
+  partyId                  String
+  sourceType               String
+  sourceId                 String
+  title                    String
+  artist                   String
+  artworkUrl               String?
+  streamUrl                String?
+  durationSeconds          Int
+  queuePosition            Int
+  submittedByParticipantId String
+  status                   String          @default("queued")
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
+
+  party       Party       @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  submittedBy Participant @relation(fields: [submittedByParticipantId], references: [id], onDelete: Cascade)
+  reactions   Reaction[]
+  savedBy     SavedTrack[]
+  rankings    RankingEntry[]
+  ballotRanks BallotRank[]
+}
+
+model PlaybackState {
+  partyId           String   @id
+  currentTrackId    String?
+  startedAt         DateTime?
+  pausedAt          DateTime?
+  positionSeconds   Int      @default(0)
+  isPlaying         Boolean  @default(false)
+  updatedAt         DateTime @updatedAt
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+}
+
+model Reaction {
+  id            String       @id @default(cuid())
+  partyId       String
+  participantId String
+  trackId       String
+  type          String
+  createdAt     DateTime     @default(now())
+
+  party       Party       @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  track       Track       @relation(fields: [trackId], references: [id], onDelete: Cascade)
+}
+
+model SavedTrack {
+  id            String   @id @default(cuid())
+  participantId String
+  trackId       String
+  createdAt     DateTime @default(now())
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  track       Track       @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, trackId])
+}
+
+model RankingEntry {
+  id            String @id @default(cuid())
+  participantId String
+  trackId       String
+  rank          Int
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  track       Track       @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, rank])
+  @@unique([participantId, trackId])
+}
+
+model Ballot {
+  id            String   @id @default(cuid())
+  partyId       String
+  participantId String
+  submittedAt   DateTime @default(now())
+
+  party       Party       @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  ranks       BallotRank[]
+
+  @@unique([partyId, participantId])
+}
+
+model BallotRank {
+  id       String @id @default(cuid())
+  ballotId String
+  trackId  String
+  rank     Int
+
+  ballot Ballot @relation(fields: [ballotId], references: [id], onDelete: Cascade)
+  track  Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+}
+
+model EventLog {
+  id        String   @id @default(cuid())
+  partyId   String
+  type      String
+  payload   String
+  createdAt DateTime @default(now())
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+}
+
+model SpotifyConnection {
+  partyId       String   @id
+  spotifyUserId String
+  displayName   String?
+  accessToken   String
+  refreshToken  String
+  scope         String?
+  expiresAt     DateTime
+  deviceId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+}
+
+model ListenerSpotifyConnection {
+  id            String   @id @default(cuid())
+  partyId       String
+  participantId String   @unique
+  spotifyUserId String
+  displayName   String?
+  accessToken   String
+  refreshToken  String
+  scope         String?
+  expiresAt     DateTime
+  deviceId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  party       Party       @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([partyId, participantId])
+}
+
+model DiscordGuildLink {
+  id        String   @id @default(cuid())
+  guildId   String   @unique
+  partyId   String?
+  createdAt DateTime @default(now())
+}
+
+model DesktopDevice {
+  id            String   @id @default(cuid())
+  participantId String?
+  deviceName    String
+  platform      String
+  createdAt     DateTime @default(now())
+  lastSeenAt     DateTime @default(now())
+}
