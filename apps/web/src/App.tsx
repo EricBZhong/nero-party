@@ -3,7 +3,6 @@ import {
   ArrowDown,
   ArrowUp,
   AudioLines,
-  BarChart3,
   ChevronRight,
   Clock,
   Crown,
@@ -11,7 +10,6 @@ import {
   DoorOpen,
   GripVertical,
   Heart,
-  Headphones,
   ListMusic,
   Loader2,
   type LucideIcon,
@@ -59,17 +57,6 @@ type Flash = { tone: "good" | "warn" | "bad"; message: string } | null;
 type LeaveIntent = "room" | null;
 
 const route = parseRoute();
-const surfaceProof = [
-  { name: "Create / join", detail: "Room setup with preview", initials: "01", image: "/assets/surface-map/create-join.png" },
-  { name: "Focus room", detail: "Current song as the room", initials: "02", image: "/assets/surface-map/focus-room.png" },
-  { name: "Add song modal", detail: "Audius search and uploads", initials: "03", image: "/assets/surface-map/add-song.png" },
-  { name: "Top 3 drawer", detail: "Private ranking layer", initials: "04", image: "/assets/surface-map/top3-drawer.png" },
-  { name: "Overlay panel", detail: "Alt / Option + X multitasking", initials: "05", image: "/assets/surface-map/overlay-panel.png" },
-  { name: "Leaderboard", detail: "Room-wide proof", initials: "06", image: "/assets/surface-map/leaderboard.png" },
-  { name: "Final reveal", detail: "Live scoring moment", initials: "07", image: "/assets/surface-map/final-reveal.png" },
-  { name: "Saved playlist", detail: "Personal takeaways", initials: "08", image: "/assets/surface-map/saved-playlist.png" },
-];
-const rotatingMoments = ["current song", "top three", "saved playlist", "shared queue"];
 
 function App() {
   const [partyCode, setPartyCode] = useState(route.code);
@@ -480,97 +467,51 @@ function Entry({
                 <Field label="Host name">
                   <input className="field" value={hostName} onChange={(event) => setHostName(event.target.value)} minLength={1} maxLength={40} />
                 </Field>
-                <div className="host-condition-panel">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-black uppercase tracking-[0.22em] text-nero-live">Host conditions</p>
-                      <h3 className="mt-1 text-lg font-semibold">Room rules before invites go out</h3>
-                    </div>
-                    <SlidersHorizontal className="h-5 w-5 text-nero-live" />
-                  </div>
-                  <div className="host-condition-grid">
-                    <HostLimitControl
-                      icon={ListMusic}
-                      label="Song limit"
-                      value={maxQueueSize}
-                      min={3}
-                      max={100}
-                      suffix="tracks"
-                      onChange={setMaxQueueSize}
-                    />
-                    <HostLimitControl
-                      icon={Clock}
-                      label="Time limit"
-                      value={maxDurationMinutes}
-                      min={5}
-                      max={240}
-                      step={5}
-                      suffix="min"
-                      onChange={setMaxDurationMinutes}
-                    />
-                    <HostLimitControl
-                      icon={Ticket}
-                      label="Per listener"
-                      value={maxSubmissionsPerParticipant}
+                <div className="simple-room-controls">
+                  <label className="setup-range-control">
+                    <span>
+                      <strong>Max submissions per user</strong>
+                      <em>{maxSubmissionsPerParticipant}</em>
+                    </span>
+                    <input
+                      className="setup-range"
+                      type="range"
                       min={1}
-                      max={20}
-                      suffix="songs"
-                      onChange={setMaxSubmissionsPerParticipant}
+                      max={10}
+                      value={maxSubmissionsPerParticipant}
+                      onChange={(event) => setMaxSubmissionsPerParticipant(Number(event.currentTarget.value))}
                     />
-                    <HostLimitControl
-                      icon={Trophy}
-                      label="Voting lock"
-                      value={votingLockSeconds}
-                      min={10}
-                      max={900}
-                      step={10}
-                      suffix="sec"
-                      onChange={setVotingLockSeconds}
-                    />
-                  </div>
-                  <div className="source-toggle-grid">
-                    <SourceToggle
-                      active={allowAudius}
-                      disabled={allowAudius && enabledSourceCount === 1}
-                      icon={Search}
-                      label="Audius"
-                      onClick={() => setAllowAudius((current) => (current && enabledSourceCount === 1 ? current : !current))}
-                    />
-                    <SourceToggle
-                      active={allowUploads}
-                      disabled={allowUploads && enabledSourceCount === 1}
-                      icon={Upload}
-                      label="Uploads"
-                      onClick={() => setAllowUploads((current) => (current && enabledSourceCount === 1 ? current : !current))}
-                    />
-                    <SourceToggle
-                      active={allowSpotify}
-                      disabled={allowSpotify && enabledSourceCount === 1}
-                      icon={Disc3}
-                      label="Spotify"
-                      onClick={() => setAllowSpotify((current) => (current && enabledSourceCount === 1 ? current : !current))}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div className="setup-policy-card">
-                    <Disc3 className="h-5 w-5 text-nero-live" />
-                    <span>
-                      <strong>Spotify listener playback</strong>
-                      <span>Linked listener devices receive Spotify tracks.</span>
-                    </span>
-                  </div>
-                  <div className="setup-policy-card">
-                    <PanelRightOpen className="h-5 w-5 text-nero-live" />
-                    <span>
-                      <strong>Overlay stays</strong>
-                      <span>Open the compact layer when multitasking.</span>
-                    </span>
+                  </label>
+                  <div className="setup-source-block">
+                    <p>Source options</p>
+                    <div className="source-toggle-grid">
+                      <SourceToggle
+                        active={allowAudius}
+                        disabled={allowAudius && enabledSourceCount === 1}
+                        icon={Search}
+                        label="Audius"
+                        onClick={() => setAllowAudius((current) => (current && enabledSourceCount === 1 ? current : !current))}
+                      />
+                      <SourceToggle
+                        active={allowUploads}
+                        disabled={allowUploads && enabledSourceCount === 1}
+                        icon={Upload}
+                        label="Upload"
+                        onClick={() => setAllowUploads((current) => (current && enabledSourceCount === 1 ? current : !current))}
+                      />
+                      <SourceToggle
+                        active={allowSpotify}
+                        disabled={allowSpotify && enabledSourceCount === 1}
+                        icon={Disc3}
+                        label="Spotify"
+                        onClick={() => setAllowSpotify((current) => (current && enabledSourceCount === 1 ? current : !current))}
+                      />
+                    </div>
                   </div>
                 </div>
                 <button className="hero-cta h-12 justify-center" disabled={loading}>
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Launch party
+                  Launch room
                 </button>
               </form>
             ) : (
@@ -601,7 +542,7 @@ function Entry({
                 </Field>
                 <button className="hero-cta h-12 justify-center" disabled={loading || !joinCode}>
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
-                  Join party
+                  Enter room
                 </button>
               </form>
             )}
@@ -611,62 +552,6 @@ function Entry({
         <SetupPreview title={tab === "create" ? title : "Listening party"} mode={mode} tab={tab} settings={pendingSettings} />
       </div>
     </section>
-  );
-}
-
-function HostLimitControl({
-  icon: Icon,
-  label,
-  value,
-  min,
-  max,
-  step = 1,
-  suffix,
-  onChange,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step?: number;
-  suffix: string;
-  onChange: (value: number) => void;
-}) {
-  const update = (nextValue: number) => {
-    if (!Number.isFinite(nextValue)) return;
-    onChange(clampInt(nextValue, min, max));
-  };
-
-  return (
-    <label className="host-limit-control">
-      <span className="host-limit-label">
-        <Icon className="h-4 w-4 text-nero-live" />
-        {label}
-      </span>
-      <span className="host-limit-value">
-        <input
-          className="limit-number-input"
-          type="number"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(event) => update(event.currentTarget.valueAsNumber)}
-        />
-        <small>{suffix}</small>
-      </span>
-      <input
-        className="limit-range"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => update(event.currentTarget.valueAsNumber)}
-        aria-label={label}
-      />
-    </label>
   );
 }
 
@@ -697,192 +582,60 @@ function SourceToggle({
   );
 }
 
-function SetupOption({
-  active,
-  icon: Icon,
-  title,
-  copy,
-  onClick,
-}: {
-  active: boolean;
-  icon: LucideIcon;
-  title: string;
-  copy: string;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" className={`setup-option ${active ? "setup-option-active" : ""}`} onClick={onClick}>
-      <Icon className="h-5 w-5" />
-      <span>
-        <strong>{title}</strong>
-        <span>{copy}</span>
-      </span>
-    </button>
-  );
-}
-
 function SetupPreview({ title, mode, tab, settings }: { title: string; mode: PartyMode; tab: string; settings: PartySettings }) {
   return (
-    <aside className="setup-preview">
-      <img className="setup-preview-photo" src="/assets/login-hero.png" alt="" />
+    <aside className="setup-preview stitch-preview-stage">
       <div className="setup-preview-shade" aria-hidden />
       <div className="setup-preview-scanlines" aria-hidden />
-      <div className="relative flex h-full flex-col justify-between gap-6 p-5 sm:p-8">
-        <div className="flex items-center justify-between gap-3">
-          <div className="live-context-pill">
-            <span className="live-dot" />
-            Live preview
-          </div>
-          <span className="rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-xs font-bold text-white/65">
-            Focus room
-          </span>
-        </div>
-
-        <div className="preview-console-card" aria-label="Room preview">
+      <div className="setup-gradient-boundary" aria-hidden />
+      <div className="relative flex h-full min-h-[560px] items-center justify-center p-6 lg:justify-start lg:pl-12 xl:pl-20">
+        <div className="preview-console-card stitch-live-preview" aria-label="Room preview">
           <div className="preview-console-top">
-            <span />
-            <span />
-            <span />
-            <strong>LIVE PREVIEW</strong>
+            <span className="preview-live-dot" />
+            <strong>Live</strong>
+            <em>{title || "Late night vibes"}</em>
           </div>
-          <div className="preview-console-body">
-            <div className="preview-album-tile">
-              <Disc3 className="h-8 w-8" />
-            </div>
-            <div className="min-w-0">
-              <p>{tab === "create" ? "Ready to create" : "Ready to join"}</p>
-              <h3>{title || "Untitled party"}</h3>
-              <div className="preview-progress" aria-hidden>
-                <span />
-              </div>
-            </div>
-          </div>
-          <div className="preview-console-footer">
-            <span><Users className="h-4 w-4" /> 12 listeners</span>
-            <span>{formatEnabledSources(settings)}</span>
-          </div>
-        </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.22em] text-nero-live">{tab === "create" ? "Ready to create" : "Ready to join"}</p>
-            <h3 className="mt-2 text-3xl font-light leading-none">{title || "Untitled party"}</h3>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-white/58">
-              The room opens as a live surface first. Queue, submit, ranking, and finale appear as layers when people need them.
-            </p>
+          <div className="preview-now-row">
+            <div className="preview-album-tile" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p>Up next</p>
+              <h3>{tab === "create" ? "Midnight City" : "Ready to join"}</h3>
+              <small>{tab === "create" ? "M83" : formatEnabledSources(settings)}</small>
+            </div>
+            <div className="preview-eq-mini" aria-hidden>
+              <i />
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
           </div>
-          <div className="setup-preview-stats">
-            <MiniSignal icon={ListMusic} label="Song cap" value={`${settings.maxQueueSize} tracks`} />
-            <MiniSignal icon={Clock} label="Timebox" value={`${settings.maxDurationMinutes} min`} />
-            <MiniSignal icon={Ticket} label="Per listener" value={`${settings.maxSubmissionsPerParticipant} songs`} />
-            <MiniSignal icon={Trophy} label="Mode" value={mode === "focus" ? "Top 3" : "Companion"} />
+
+          <div className="preview-top-list">
+            <div className="preview-top-heading">
+              <span>Current Top 3</span>
+              <span>Queue: {settings.maxQueueSize}</span>
+            </div>
+            <div className="preview-top-row preview-top-row-active">
+              <span>1</span>
+              <strong>Genesis</strong>
+              <em>24 pts</em>
+            </div>
+            <div className="preview-top-row">
+              <span>2</span>
+              <strong>Nightcall</strong>
+              <em>18 pts</em>
+            </div>
+            <div className="preview-top-row">
+              <span>3</span>
+              <strong>{mode === "focus" ? "Gosh" : "Overlay ready"}</strong>
+              <em>{settings.maxSubmissionsPerParticipant} picks</em>
+            </div>
           </div>
         </div>
       </div>
     </aside>
-  );
-}
-
-function RotatingPhrase({ words }: { words: string[] }) {
-  return (
-    <span className="phrase-window" aria-label={words.join(", ")}>
-      <span className="phrase-track">
-        {[...words, words[0]].map((word, index) => (
-          <span key={`${word}-${index}`} className="phrase-chip">
-            {word}
-          </span>
-        ))}
-      </span>
-    </span>
-  );
-}
-
-function SurfacePreviewStrip() {
-  const doubled = [...surfaceProof, ...surfaceProof, ...surfaceProof];
-  return (
-    <section className="surface-proof" aria-label="Nero Party surfaces">
-      <div className="mb-5 flex items-end justify-between gap-4">
-        <div>
-          <p className="text-sm text-white/45">One room, two usable contexts</p>
-          <h3 className="mt-2 text-4xl font-light sm:text-5xl">Built for the way groups actually listen</h3>
-        </div>
-        <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/55 sm:flex">
-          <Headphones className="h-4 w-4 text-nero-live" />
-          Product demo map
-        </div>
-      </div>
-      <div className="surface-marquee">
-        <div className="surface-marquee-track">
-          {doubled.map((surface, index) => (
-            <SurfaceTile key={`${surface.name}-${index}`} surface={surface} index={index} />
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function SurfaceTile({ surface, index }: { surface: { name: string; detail: string; initials: string; image: string }; index: number }) {
-  return (
-    <div className="surface-tile group">
-      <div className="surface-tile-art" style={{ backgroundImage: `url(${surface.image})` }}>
-        <span>{surface.initials}</span>
-      </div>
-      <div className="absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/30" />
-      <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/90 to-transparent p-4">
-        <p className="truncate text-sm font-semibold">{surface.name}</p>
-        <p className="text-xs text-white/58">{surface.detail}</p>
-      </div>
-      <span className="absolute right-3 top-3 rounded-full bg-black/40 px-2 py-1 text-[10px] font-black text-white/70">0{(index % surfaceProof.length) + 1}</span>
-    </div>
-  );
-}
-
-function NeroFeatureWall() {
-  return (
-    <section className="grid gap-4 lg:grid-cols-3">
-      <FeatureProofCard
-        icon={ListMusic}
-        title="Simple while multitasking"
-        copy="The overlay keeps the core choice visible: Save, put it in Top 3, or keep listening."
-        metric="One tap"
-      />
-      <FeatureProofCard
-        icon={BarChart3}
-        title="Deeper when focused"
-        copy="Focus Mode opens the full queue, listened history, ballot editing, leaderboard, and final reveal."
-        metric="Focus room"
-      />
-      <FeatureProofCard
-        icon={Ticket}
-        title="Real songs, clean control"
-        copy="Uploads and Audius play in browser. Spotify starts on each linked listener's active Spotify device."
-        metric="Rights-safe"
-      />
-    </section>
-  );
-}
-
-function FeatureProofCard({ icon: Icon, title, copy, metric }: { icon: LucideIcon; title: string; copy: string; metric: string }) {
-  return (
-    <article className="feature-proof-card group">
-      <div className="flex items-center justify-between gap-3">
-        <Icon className="h-5 w-5 text-white/70 transition-transform duration-300 group-hover:scale-110 group-hover:text-nero-live" />
-        <span className="rounded-full border border-white/10 bg-white/[0.045] px-3 py-1 text-xs font-bold text-white/58">{metric}</span>
-      </div>
-      <h3 className="mt-8 text-3xl font-light leading-none">{title}</h3>
-      <p className="mt-4 text-sm leading-6 text-white/58">{copy}</p>
-    </article>
-  );
-}
-
-function MetricTile({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-[22px] border border-white/10 bg-white/[0.045] p-4 backdrop-blur-xl">
-      <Icon className="h-4 w-4 text-nero-live" aria-hidden />
-      <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-white/42">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
-    </div>
   );
 }
 
@@ -1042,9 +795,6 @@ function NowPlayingStage({
               Leave
             </button>
           </nav>
-          <button className="brand-icon-button" onClick={() => onOpenOverlay()} title="Open overlay preview" aria-label="Open overlay preview">
-            <Minimize2 className="h-4 w-4" />
-          </button>
         </header>
 
         <div className="stage-room-heading">
@@ -2319,16 +2069,6 @@ function getProjectedWinners(state: PartyState) {
     }));
 
   return scoreBallots(state.tracks, ballots);
-}
-
-function MiniSignal({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
-      <Icon className="h-4 w-4 text-nero-live" aria-hidden />
-      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-white/45">{label}</p>
-      <p className="mt-1 truncate text-sm font-bold">{value}</p>
-    </div>
-  );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
