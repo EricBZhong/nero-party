@@ -304,7 +304,7 @@ function App() {
     <main className={`nero-app-shell min-h-screen bg-nero-ink text-white ${route.surface === "overlay" ? "overlay-shell" : ""}`}>
       <audio ref={audioRef} preload="auto" />
       <div className="nero-grid-bg fixed inset-0 pointer-events-none" />
-      <div className="relative mx-auto flex min-h-screen w-full max-w-none flex-col px-3 py-3 sm:px-4 lg:px-5">
+      <div className={`relative mx-auto flex min-h-screen w-full max-w-none flex-col ${state && participantToken && currentParticipant && route.surface !== "overlay" ? "px-0 py-0" : "px-3 py-3 sm:px-4 lg:px-5"}`}>
         {flash ? <FlashBanner flash={flash} onDismiss={() => setFlash(null)} /> : null}
 
         {!state || !participantToken || !currentParticipant ? (
@@ -866,78 +866,64 @@ function NowPlayingStage({
   const topTracks = participantRanking.map((trackId) => state.tracks.find((track) => track.id === trackId)).filter(Boolean) as Track[];
   const projectedWinners = getProjectedWinners(state);
   const stageTransitionKey = heroTrack?.id ?? stageLabel;
+  const listenerCount = state.participants.length;
   return (
     <div className="stage-shell live-stage overflow-hidden">
       <div className="stage-orbit" aria-hidden />
       <div className="stage-light-beams" aria-hidden />
-      <div className="relative grid min-h-[calc(100dvh-2rem)] gap-7">
-        <header className="brand-appbar">
-          <span className="brand-wordmark">NERO PARTY</span>
-          <nav className="brand-nav" aria-label="Room actions">
-            <button className="brand-nav-button" onClick={onOpenSubmit}>
-              <Plus className="h-4 w-4" />
-              Add Song
-            </button>
-            <button className="brand-nav-button" onClick={onOpenQueue}>
-              <ListMusic className="h-4 w-4" />
-              Queue
-            </button>
-            <button className="brand-nav-button" onClick={onOpenSaved}>
-              <Heart className="h-4 w-4" />
-              Saved {savedCount ? savedCount : ""}
-            </button>
-            <SpotifyHeaderAction state={state} participantToken={participantToken} />
-            <button className="brand-nav-button brand-nav-danger" onClick={onLeave}>
-              <DoorOpen className="h-4 w-4" />
-              Leave
-            </button>
-          </nav>
-        </header>
 
-        <div className="stage-room-heading">
-          <div className="live-context-pill">
-            <span className="live-dot" />
-            Live room
-            <span>Web</span>
-            <span>{state.party.code}</span>
-          </div>
-          <h2>{state.party.title}</h2>
-          <p>{stageNote}</p>
-        </div>
+      <header className="brand-appbar">
+        <span className="brand-wordmark">NERO PARTY</span>
+        <nav className="brand-nav" aria-label="Room actions">
+          <button className="brand-nav-button" onClick={onOpenSubmit}>
+            <Plus className="h-4 w-4" />
+            Add Song
+          </button>
+          <button className="brand-nav-button" onClick={onOpenQueue}>
+            <ListMusic className="h-4 w-4" />
+            Queue
+          </button>
+          <button className="brand-nav-button" onClick={onOpenSaved}>
+            <Heart className="h-4 w-4" />
+            Saved {savedCount ? savedCount : ""}
+          </button>
+          {!isFinalized ? <SpotifyHeaderAction state={state} participantToken={participantToken} /> : null}
+          <button className="brand-nav-button brand-nav-danger" onClick={onLeave}>
+            <DoorOpen className="h-4 w-4" />
+            Leave
+          </button>
+        </nav>
+      </header>
 
-        {isFinalized ? (
-          <div className="finale-room-wrap">
-            <Winners state={state} />
-          </div>
-        ) : (
-          <div className="live-room-main">
-            <QueuePreviewCard state={state} onOpenQueue={onOpenQueue} />
+      {isFinalized ? (
+        <Winners state={state} onOpenSaved={onOpenSaved} onLeave={onLeave} />
+      ) : (
+        <main className="focus-room-canvas">
+          <QueuePreviewCard state={state} onOpenQueue={onOpenQueue} />
 
-            <div className="now-playing-core">
-              <div key={stageTransitionKey} className="song-stage-transition">
-                <TrackArtwork track={heroTrack} size="large" />
-                <p className="mt-6 text-sm font-black uppercase tracking-[0.24em] text-nero-live/90">{stageLabel}</p>
-                <h1 className="stage-title mt-3 max-w-5xl break-words text-center text-5xl font-light leading-none sm:text-6xl xl:text-7xl">
-                  {heroTrack?.title ?? "Queue is open."}
-                </h1>
-                <p className="mt-4 max-w-2xl text-center text-lg text-white/60 sm:text-2xl">
-                  {heroTrack?.artist ?? "Listen together, save what lands, and keep a private running ballot."}
-                </p>
+          <section className="focus-center-stage">
+            <div className="focus-room-pill">
+              <span className={state.playback.isPlaying ? "live-dot live-dot-red" : "live-dot"} />
+              <span>{state.party.title}</span>
+              <span>{state.party.code}</span>
+              <span>{listenerCount} listener{listenerCount === 1 ? "" : "s"}</span>
+            </div>
 
-                <div className="mt-8 w-full max-w-3xl">
-                  <div className="waveform-progress" aria-hidden>
-                    {Array.from({ length: 72 }).map((_, index) => (
-                      <span key={index} style={{ height: `${18 + ((index * 13) % 42)}%`, opacity: index / 72 <= progress / 100 ? 1 : 0.28 }} />
-                    ))}
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-3 text-sm text-white/55">
-                    <span>{currentTrack ? formatTime(playbackSeconds) : "0:00"}</span>
-                    <span>{currentTrack ? formatTime(currentTrack.durationSeconds) : isPreview ? "Ready" : "Waiting"}</span>
-                  </div>
+            <div className="focus-now-playing" key={stageTransitionKey}>
+              <div className="focus-artwork-glow" aria-hidden />
+              <TrackArtwork track={heroTrack} size="large" />
+
+              <div className="focus-song-copy">
+                <p>{stageLabel}</p>
+                <h1>{heroTrack?.title ?? "Queue is open."}</h1>
+                <h2>{heroTrack?.artist ?? "Add a song to start the room."}</h2>
+                <div>
+                  <span>{heroTrack ? `Queued by ${heroTrack.submittedByName}` : stageNote}</span>
+                  {heroTrack ? <span>Source: {formatSourceLabel(heroTrack.sourceType)}</span> : null}
                 </div>
               </div>
 
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+              <div className="focus-quick-actions">
                 {currentTrack ? (
                   <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} onStateChange={onStateChange} />
                 ) : state.tracks.length === 0 ? (
@@ -953,35 +939,58 @@ function NowPlayingStage({
                 )}
               </div>
 
-              {isHost ? (
-                <div className="mt-5">
-                  <HostControls
-                    state={state}
-                    participantToken={participantToken}
-                    currentTrack={currentTrack}
-                    audioUnlocked={audioUnlocked}
-                    onFlash={onFlash}
-                    onStateChange={onStateChange}
-                    onPrimeAudio={onUnlockAudio}
-                  />
+              <div className="focus-progress">
+                <div className="waveform-progress" aria-hidden>
+                  {Array.from({ length: 48 }).map((_, index) => (
+                    <span
+                      key={index}
+                      className={state.playback.isPlaying ? `waveform-bar delay-${(index % 5) + 1}` : ""}
+                      style={{ height: `${16 + ((index * 17) % 70)}%`, opacity: index / 48 <= progress / 100 ? 1 : 0.28 }}
+                    />
+                  ))}
                 </div>
-              ) : null}
+                <div className="focus-progress-track" aria-hidden>
+                  <span style={{ width: `${progress}%` }} />
+                </div>
+                <div className="focus-progress-times">
+                  <span>{currentTrack ? formatTime(playbackSeconds) : "0:00"}</span>
+                  <span>{currentTrack ? formatTime(currentTrack.durationSeconds) : isPreview ? "Ready" : "Waiting"}</span>
+                </div>
+              </div>
             </div>
 
-            <div className="live-side-stack">
-              <BallotPreview
-                heroTrack={heroTrack}
-                topTracks={topTracks}
-                savedCount={savedCount}
-                ownPosition={ownPosition}
-                onOpenRanking={onOpenRanking}
+            {isHost ? (
+              <HostControls
+                state={state}
+                participantToken={participantToken}
+                currentTrack={currentTrack}
+                audioUnlocked={audioUnlocked}
+                onFlash={onFlash}
+                onStateChange={onStateChange}
+                onPrimeAudio={onUnlockAudio}
               />
-              <LeaderboardPreview state={state} projectedWinners={projectedWinners} />
-            </div>
-          </div>
-        )}
+            ) : null}
+          </section>
+
+          <aside className="focus-right-rail">
+            <BallotPreview
+              heroTrack={heroTrack}
+              topTracks={topTracks}
+              savedCount={savedCount}
+              ownPosition={ownPosition}
+              onOpenRanking={onOpenRanking}
+            />
+            <LeaderboardPreview state={state} projectedWinners={projectedWinners} />
+          </aside>
+        </main>
+      )}
+
+      <footer className="stage-brand-footer">
+        <strong>NERO PARTY</strong>
+        <span>{isFinalized ? "Final ballots locked" : stageNote}</span>
+        <span>{state.party.code}</span>
+      </footer>
       </div>
-    </div>
   );
 }
 
@@ -1043,7 +1052,7 @@ function TrackThumb({ track, live = false }: { track: Pick<Track, "title" | "art
 }
 
 function QueuePreviewCard({ state, onOpenQueue }: { state: PartyState; onOpenQueue: () => void }) {
-  const queued = state.tracks.filter((track) => track.status === "queued").slice(0, 6);
+  const queued = state.tracks.filter((track) => track.status === "queued").slice(0, 5);
   const playing = state.tracks.find((track) => track.status === "playing");
   return (
     <aside className="stage-queue-card">
@@ -1068,6 +1077,9 @@ function QueuePreviewCard({ state, onOpenQueue }: { state: PartyState; onOpenQue
           </button>
         ) : null}
       </div>
+      <button className="queue-view-all-button" onClick={onOpenQueue}>
+        View full queue
+      </button>
     </aside>
   );
 }
@@ -1075,10 +1087,10 @@ function QueuePreviewCard({ state, onOpenQueue }: { state: PartyState; onOpenQue
 function QueuePreviewRow({ track, index, live = false }: { track: Track; index: string; live?: boolean }) {
   return (
     <div className={`queue-preview-row ${live ? "queue-preview-row-live" : ""}`}>
-      <span>{index}</span>
+      <TrackThumb track={track} live={live} />
       <div className="min-w-0">
         <p className="truncate text-sm font-semibold">{track.title}</p>
-        <p className="truncate text-xs text-white/45">{track.artist}</p>
+        <p className="truncate text-xs text-white/45">{track.artist} · {live ? "Now playing" : `#${index}`}</p>
       </div>
     </div>
   );
@@ -2323,11 +2335,12 @@ function SubmissionPanel({
   );
 }
 
-function Winners({ state }: { state: PartyState }) {
+function Winners({ state, onOpenSaved, onLeave }: { state: PartyState; onOpenSaved: () => void; onLeave: () => void }) {
   if (state.party.status !== "finalized") return null;
   const winner = state.winners[0] ?? null;
-  const winnerTrack = winner ? state.tracks.find((track) => track.id === winner.trackId) ?? null : null;
   const totalBallots = new Set(state.ranking.map((entry) => entry.participantId)).size;
+  const second = state.winners[1] ?? null;
+  const third = state.winners[2] ?? null;
   return (
     <div className="finale-stage finale-theater">
       <div className="finale-rays" aria-hidden />
@@ -2344,52 +2357,72 @@ function Winners({ state }: { state: PartyState }) {
         </div>
       </div>
 
-      {winner ? (
-        <div className="finale-winner-hero">
-          <span className="finale-rank finale-rank-xl">1</span>
-          <TrackArtwork track={winnerTrack} size="small" />
-          <div className="min-w-0">
-            <p className="finale-winner-label"><Trophy className="h-4 w-4" /> Winner</p>
-            <h3>{winner.title}</h3>
-            <p>{winner.artist} · submitted by {winner.submittedByName}</p>
-          </div>
-          <div className="finale-winner-score">
-            <strong>{winner.score}</strong>
-            <span>pts</span>
-            <small>{winner.firstPlaceVotes} first-place</small>
-          </div>
-        </div>
-      ) : (
-        <div className="source-empty-state mt-6">No Top 3 ballots were submitted before finale.</div>
-      )}
-
       {state.winners.length ? (
         <div className="finale-podium finale-podium-theater">
-          {state.winners.slice(0, 3).map((nextWinner, index) => {
-            const rankClass = index === 0 ? "finale-card-1" : index === 1 ? "finale-card-2" : "finale-card-3";
-            return (
-              <div key={nextWinner.trackId} className={`finale-card ${rankClass}`}>
-                <span className="finale-rank">{index + 1}</span>
-                <TrackArtwork track={state.tracks.find((track) => track.id === nextWinner.trackId) ?? null} size="small" />
-                <div className="min-w-0">
-                  <p className="truncate text-lg font-semibold">{nextWinner.title}</p>
-                  <p className="truncate text-sm text-white/55">{nextWinner.artist}</p>
-                  <small>submitted by {nextWinner.submittedByName}</small>
-                </div>
-                <div className="finale-card-score">
-                  <strong>{nextWinner.score}</strong>
-                  <span>{nextWinner.appearances} vote{nextWinner.appearances === 1 ? "" : "s"}</span>
-                </div>
-              </div>
-            );
-          })}
+          <FinalePodiumCard winner={second} track={second ? state.tracks.find((track) => track.id === second.trackId) ?? null : null} rank={2} />
+          <FinalePodiumCard winner={winner} track={winner ? state.tracks.find((track) => track.id === winner.trackId) ?? null : null} rank={1} />
+          <FinalePodiumCard winner={third} track={third ? state.tracks.find((track) => track.id === third.trackId) ?? null : null} rank={3} />
         </div>
-      ) : null}
+      ) : (
+        <div className="source-empty-state mt-10">No Top 3 ballots were submitted before End Game.</div>
+      )}
+
+      <div className="finale-actions">
+        <button className="primary-button finale-action-primary" onClick={onLeave}>
+          <Play className="h-5 w-5 fill-current" />
+          Play Again
+        </button>
+        <button className="secondary-button finale-action-secondary" onClick={onOpenSaved}>
+          <Download className="h-5 w-5" />
+          Export Playlist
+        </button>
+      </div>
 
       <p className="finale-rules-copy">
         Final ballots use each listener's current Top 3. Tie-breaks go by first-place votes, appearances, then earlier queue position.
       </p>
     </div>
+  );
+}
+
+function FinalePodiumCard({
+  winner,
+  track,
+  rank,
+}: {
+  winner: PartyState["winners"][number] | null;
+  track: Track | null;
+  rank: 1 | 2 | 3;
+}) {
+  const rankClass = rank === 1 ? "finale-card-1" : rank === 2 ? "finale-card-2" : "finale-card-3";
+  return (
+    <article className={`finale-card ${rankClass}`}>
+      <div className="finale-rank">{rank}</div>
+      <div className="finale-card-panel">
+        {rank === 1 ? (
+          <div className="finale-winner-label">
+            <Trophy className="h-4 w-4" />
+            Winner
+          </div>
+        ) : null}
+        <TrackArtwork track={track} size="small" />
+        <div className="min-w-0">
+          <h3>{winner?.title ?? "Open slot"}</h3>
+          <p>{winner?.artist ?? "No ballot entry"}</p>
+        </div>
+        <div className="finale-card-meta">
+          <div>
+            <span>Submitted by</span>
+            <strong>{winner?.submittedByName ?? "Room"}</strong>
+          </div>
+          <div className="finale-card-score">
+            <strong>{winner?.score ?? 0}</strong>
+            <span>pts</span>
+            <small>{winner ? `${winner.firstPlaceVotes} first-place` : "0 votes"}</small>
+          </div>
+        </div>
+      </div>
+    </article>
   );
 }
 
@@ -2443,6 +2476,13 @@ function getParticipantRanking(state: PartyState, participantId: string) {
 
 function getListenedTracks(state: PartyState) {
   return state.tracks.filter((track) => track.status === "played" || track.status === "playing").sort((a, b) => b.queuePosition - a.queuePosition);
+}
+
+function formatSourceLabel(sourceType: Track["sourceType"]) {
+  if (sourceType === "spotify") return "Spotify";
+  if (sourceType === "audius") return "Audius";
+  if (sourceType === "upload") return "Upload";
+  return sourceType;
 }
 
 function getSavedTracks(state: PartyState, participantId: string) {
