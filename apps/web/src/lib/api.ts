@@ -22,6 +22,10 @@ export interface SpotifyStatus {
   scope: string | null;
   roomConnectionCount?: number;
   hostConnected?: boolean;
+  playbackReady?: boolean;
+  deviceName?: string | null;
+  deviceCount?: number;
+  deviceError?: string | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -83,6 +87,17 @@ export function spotifyLoginUrl(partyId: string, participantToken: string) {
   return url.toString();
 }
 
+export function getSpotifyWebToken(partyId: string, participantToken: string) {
+  return request<{ accessToken: string }>(`/api/parties/${partyId}/spotify/web-token?participantToken=${encodeURIComponent(participantToken)}`);
+}
+
+export function setSpotifyDevice(partyId: string, participantToken: string, deviceId: string) {
+  return request<{ deviceId: string }>(`/api/parties/${partyId}/spotify/device`, {
+    method: "POST",
+    body: JSON.stringify({ participantToken, deviceId }),
+  });
+}
+
 export function uploadAudio(formData: FormData) {
   return request<SearchTrack>("/api/uploads/audio", {
     method: "POST",
@@ -118,6 +133,13 @@ export function updateRanking(participantId: string, participantToken: string, t
 
 export function startPlayback(partyId: string, participantToken: string) {
   return request<{ state: PartyState }>(`/api/parties/${partyId}/playback/start`, {
+    method: "POST",
+    body: JSON.stringify({ participantToken }),
+  });
+}
+
+export function pausePlayback(partyId: string, participantToken: string) {
+  return request<{ state: PartyState }>(`/api/parties/${partyId}/playback/pause`, {
     method: "POST",
     body: JSON.stringify({ participantToken }),
   });

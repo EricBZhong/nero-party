@@ -58,6 +58,15 @@ export interface SpotifyProfile {
   displayName: string;
 }
 
+export interface SpotifyDevice {
+  id: string;
+  name: string;
+  type: string;
+  isActive: boolean;
+  isRestricted: boolean;
+  volumePercent: number | null;
+}
+
 interface SpotifyTokenResponse {
   access_token?: string;
   refresh_token?: string;
@@ -97,6 +106,17 @@ interface SpotifySearchResponse {
   tracks?: {
     items?: SpotifyTrackResponse[];
   };
+}
+
+interface SpotifyDevicesResponse {
+  devices?: Array<{
+    id?: string | null;
+    is_active?: boolean;
+    is_restricted?: boolean;
+    name?: string;
+    type?: string;
+    volume_percent?: number | null;
+  }>;
 }
 
 export class AudiusClient {
@@ -230,6 +250,48 @@ export class SpotifyClient {
     return (payload.tracks?.items ?? []).map((track) => this.mapTrack(track));
   }
 
+  async getDevices(accessToken: string): Promise<SpotifyDevice[]> {
+    const response = await this.fetchImpl(`${this.apiBase}/me/player/devices`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      throw new Error(`Spotify device lookup failed with ${response.status}`);
+    }
+    const payload = (await response.json()) as SpotifyDevicesResponse;
+    return (payload.devices ?? [])
+      .filter((device) => device.id && !device.is_restricted)
+      .map((device) => ({
+        id: device.id as string,
+        name: device.name ?? "Spotify device",
+        type: device.type ?? "device",
+        isActive: Boolean(device.is_active),
+        isRestricted: Boolean(device.is_restricted),
+        volumePercent: device.volume_percent ?? null,
+      }));
+  }
+
+  async transferPlayback(accessToken: string, deviceId: string): Promise<void> {
+    const response = await this.fetchImpl(`${this.apiBase}/me/player`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ device_ids: [deviceId], play: false }),
+    });
+    if (response.status === 204) return;
+    if (response.status === 403) {
+      throw new Error("Spotify refused device activation. Use a Premium, allowlisted account for this demo.");
+    }
+    if (response.status === 404) {
+      throw new Error("Spotify device disappeared. Open Spotify on that device, then try again.");
+    }
+    if (response.status === 429) {
+      throw new Error("Spotify rate-limited device activation. Wait a moment and try again.");
+    }
+    throw new Error(`Spotify device activation failed with ${response.status}`);
+  }
+
   async addToQueue(accessToken: string, uri: string, deviceId?: string | null): Promise<void> {
     const url = new URL(`${this.apiBase}/me/player/queue`);
     url.searchParams.set("uri", uri);
@@ -273,6 +335,26 @@ export class SpotifyClient {
       throw new Error("Spotify rate-limited playback control. Wait a moment and try again.");
     }
     throw new Error(`Spotify playback failed with ${response.status}`);
+  }
+
+  async pausePlayback(accessToken: string, deviceId?: string | null): Promise<void> {
+    const url = new URL(`${this.apiBase}/me/player/pause`);
+    if (deviceId) url.searchParams.set("device_id", deviceId);
+    const response = await this.fetchImpl(url, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (response.status === 204) return;
+    if (response.status === 404) {
+      throw new Error("Spotify has no active device for this listener. Open Spotify on that device, then try again.");
+    }
+    if (response.status === 403) {
+      throw new Error("Spotify refused pause control. Use a Premium, allowlisted account for this demo.");
+    }
+    if (response.status === 429) {
+      throw new Error("Spotify rate-limited playback control. Wait a moment and try again.");
+    }
+    throw new Error(`Spotify pause failed with ${response.status}`);
   }
 
   private async getClientCredentialsAccessToken(): Promise<string> {

@@ -39,7 +39,7 @@ Key variables:
 - `PUBLIC_WEB_URL` / `NERO_WEB_URL`: web surface used by overlay and follow-up links.
 - `AUDIUS_API_BASE`: Audius API base.
 - `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`: Spotify OAuth for listener-device playback. Add the redirect URI in the Spotify Developer Dashboard.
-- `SPOTIFY_SCOPES`: defaults to `user-modify-playback-state user-read-playback-state user-read-currently-playing`.
+- `SPOTIFY_SCOPES`: defaults to `streaming user-modify-playback-state user-read-playback-state user-read-currently-playing`.
 
 ## Product Flows
 

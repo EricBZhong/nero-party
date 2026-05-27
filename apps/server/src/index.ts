@@ -9,6 +9,7 @@ import pino from "pino";
 import { PrismaClient } from "@prisma/client";
 import { Server } from "socket.io";
 import { AudiusClient, SpotifyClient, isSupportedUploadMimeType, sanitizeUploadFileName } from "@nero/player";
+import type { SpotifyDevice } from "@nero/player";
 import {
   addTrackSchema,
   audiusSearchSchema,
@@ -73,6 +74,16 @@ const upload = multer({
     callback(null, true);
   },
 });
+
+type SpotifyConnectionRecord = {
+  partyId: string;
+  participantId?: string | null;
+  accessToken: string;
+  refreshToken: string;
+  scope: string | null;
+  expiresAt: Date;
+  deviceId?: string | null;
+};
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
@@ -191,6 +202,7 @@ app.get(
       prisma.listenerSpotifyConnection.count({ where: { partyId: party.id } }),
     ]);
     const connection = listenerConnection ?? (participant?.role === "host" ? hostConnection : null);
+    const deviceStatus = connection ? await getSpotifyDeviceStatus(connection) : null;
     res.json({
       configured: spotify.isConfigured(),
       connected: Boolean(connection),
@@ -200,6 +212,10 @@ app.get(
       scope: connection?.scope ?? null,
       roomConnectionCount,
       hostConnected: Boolean(hostConnection),
+      playbackReady: Boolean(deviceStatus?.device),
+      deviceName: deviceStatus?.device?.name ?? null,
+      deviceCount: deviceStatus?.devices.length ?? 0,
+      deviceError: deviceStatus?.error ?? null,
     });
   }),
 );
@@ -221,6 +237,49 @@ app.get(
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
     res.redirect(spotify.buildAuthorizationUrl(state, env.SPOTIFY_SCOPES));
+  }),
+);
+
+app.get(
+  "/api/parties/:partyId/spotify/web-token",
+  asyncHandler(async (req, res) => {
+    const party = await findParty(req.params.partyId);
+    const participantToken = String(req.query.participantToken ?? "");
+    const participant = await requireParticipant(party.id, participantToken);
+    const connection = await getSpotifyConnectionForParticipant(party.id, participant.id, participant.role === "host");
+    if (!connection) {
+      res.status(409).json({ message: "Connect Spotify before starting browser playback." });
+      return;
+    }
+    if (!hasSpotifyScope(connection.scope, "streaming")) {
+      res.status(409).json({ message: "Reconnect Spotify so Nero can request browser playback permission." });
+      return;
+    }
+    const accessToken = await getSpotifyAccessTokenForConnection(connection);
+    res.json({ accessToken });
+  }),
+);
+
+app.post(
+  "/api/parties/:partyId/spotify/device",
+  asyncHandler(async (req, res) => {
+    const party = await findParty(req.params.partyId);
+    const participantToken = String(req.body.participantToken ?? "");
+    const deviceId = String(req.body.deviceId ?? "").trim();
+    if (!deviceId) {
+      res.status(400).json({ message: "Missing Spotify device id." });
+      return;
+    }
+    const participant = await requireParticipant(party.id, participantToken);
+    await prisma.listenerSpotifyConnection.update({
+      where: { participantId: participant.id },
+      data: { deviceId },
+    });
+    if (participant.role === "host") {
+      await prisma.spotifyConnection.update({ where: { partyId: party.id }, data: { deviceId } }).catch(() => null);
+    }
+    await emitPartyEvent(party.id, "spotify:device_ready", { participantId: participant.id });
+    res.status(201).json({ deviceId });
   }),
 );
 
@@ -417,7 +476,18 @@ app.post(
   asyncHandler(async (req, res) => {
     const { participantToken } = playbackCommandSchema.parse(req.body);
     await requireHost(req.params.partyId, participantToken);
-    await startNextTrack(req.params.partyId);
+    await playCurrentOrNextTrack(req.params.partyId);
+    await emitPartyState(req.params.partyId);
+    res.json({ state: await getPartyState(req.params.partyId) });
+  }),
+);
+
+app.post(
+  "/api/parties/:partyId/playback/pause",
+  asyncHandler(async (req, res) => {
+    const { participantToken } = playbackCommandSchema.parse(req.body);
+    await requireHost(req.params.partyId, participantToken);
+    await pauseCurrentTrack(req.params.partyId);
     await emitPartyState(req.params.partyId);
     res.json({ state: await getPartyState(req.params.partyId) });
   }),
@@ -589,10 +659,7 @@ async function getPartyState(codeOrId: string): Promise<PartyState> {
   }));
 
   const serverNow = new Date();
-  const positionSeconds =
-    playback?.isPlaying && playback.startedAt
-      ? Math.max(0, Math.floor((serverNow.getTime() - playback.startedAt.getTime()) / 1000))
-      : playback?.positionSeconds ?? 0;
+  const positionSeconds = getPlaybackPositionSeconds(playback, serverNow);
 
   return {
     party: {
@@ -683,6 +750,28 @@ async function replaceRanking(participantId: string, trackIds: string[]) {
   ]);
 }
 
+async function getSpotifyConnectionForParticipant(partyId: string, participantId: string, allowHostFallback: boolean) {
+  const listenerConnection = await prisma.listenerSpotifyConnection.findUnique({ where: { participantId } });
+  if (listenerConnection) return listenerConnection;
+  return allowHostFallback ? prisma.spotifyConnection.findUnique({ where: { partyId } }) : null;
+}
+
+function getPlaybackPositionSeconds(playback: { isPlaying: boolean; startedAt: Date | null; positionSeconds: number } | null, now = new Date()) {
+  if (!playback) return 0;
+  if (!playback.isPlaying || !playback.startedAt) return playback.positionSeconds ?? 0;
+  return Math.max(0, Math.floor((now.getTime() - playback.startedAt.getTime()) / 1000));
+}
+
+async function getSpotifyDeviceStatus(connection: SpotifyConnectionRecord) {
+  try {
+    const accessToken = await getSpotifyAccessTokenForConnection(connection);
+    const { device, devices } = await resolveSpotifyDevice(connection, accessToken, false);
+    return { device, devices, error: null as string | null };
+  } catch (error) {
+    return { device: null, devices: [] as SpotifyDevice[], error: getErrorMessage(error) };
+  }
+}
+
 async function startSpotifyTrackForParty(
   partyId: string,
   track: { id: string; sourceType: string; sourceId: string } | null,
@@ -690,9 +779,7 @@ async function startSpotifyTrackForParty(
 ) {
   if (!track || track.sourceType !== "spotify") return { startedCount: 0, failureCount: 0, failures: [] as string[] };
   const uri = track.sourceId.startsWith("spotify:") ? track.sourceId : `spotify:track:${track.sourceId}`;
-  const listenerConnections = await prisma.listenerSpotifyConnection.findMany({ where: { partyId } });
-  const legacyHostConnection = listenerConnections.length ? null : await prisma.spotifyConnection.findUnique({ where: { partyId } });
-  const connections = legacyHostConnection ? [legacyHostConnection] : listenerConnections;
+  const connections = await getSpotifyPlaybackConnections(partyId);
 
   if (!connections.length) {
     await logEvent(partyId, "spotify.playback_skipped", { trackId: track.id, uri, reason: "no_connected_listeners" });
@@ -708,7 +795,11 @@ async function startSpotifyTrackForParty(
   for (const connection of connections) {
     try {
       const accessToken = await getSpotifyAccessTokenForConnection(connection);
-      await spotify.playUri(accessToken, uri, connection.deviceId, positionSeconds * 1000);
+      const { device } = await resolveSpotifyDevice(connection, accessToken, true);
+      if (!device) {
+        throw new Error("Spotify is connected, but no playback device is open. Keep this tab open or open Spotify on desktop/mobile, then start again.");
+      }
+      await spotify.playUri(accessToken, uri, device.id, positionSeconds * 1000);
       startedCount += 1;
     } catch (error) {
       failures.push(getErrorMessage(error));
@@ -719,10 +810,54 @@ async function startSpotifyTrackForParty(
   return { startedCount, failureCount: failures.length, failures };
 }
 
+async function pauseSpotifyTrackForParty(partyId: string, track: { sourceType: string } | null) {
+  if (!track || track.sourceType !== "spotify") return;
+  const connections = await getSpotifyPlaybackConnections(partyId);
+  for (const connection of connections) {
+    try {
+      const accessToken = await getSpotifyAccessTokenForConnection(connection);
+      const { device } = await resolveSpotifyDevice(connection, accessToken, false);
+      await spotify.pausePlayback(accessToken, device?.id ?? connection.deviceId);
+    } catch (error) {
+      await logEvent(partyId, "spotify.pause_failed", { message: getErrorMessage(error) });
+    }
+  }
+}
+
+async function getSpotifyPlaybackConnections(partyId: string) {
+  const listenerConnections = await prisma.listenerSpotifyConnection.findMany({ where: { partyId } });
+  const legacyHostConnection = listenerConnections.length ? null : await prisma.spotifyConnection.findUnique({ where: { partyId } });
+  return legacyHostConnection ? [legacyHostConnection] : listenerConnections;
+}
+
+async function resolveSpotifyDevice(connection: SpotifyConnectionRecord, accessToken: string, activate: boolean) {
+  const devices = await spotify.getDevices(accessToken);
+  const activeDevice = devices.find((device) => device.isActive);
+  const savedDevice = connection.deviceId ? devices.find((device) => device.id === connection.deviceId) : null;
+  const device = activeDevice ?? savedDevice ?? devices[0] ?? null;
+  if (!device) return { device: null, devices };
+
+  if (activate && !device.isActive) {
+    await spotify.transferPlayback(accessToken, device.id);
+  }
+  if (device.id !== connection.deviceId) {
+    await persistSpotifyDeviceId(connection, device.id);
+  }
+  return { device, devices };
+}
+
+async function persistSpotifyDeviceId(connection: SpotifyConnectionRecord, deviceId: string) {
+  if (connection.participantId) {
+    await prisma.listenerSpotifyConnection.update({ where: { participantId: connection.participantId }, data: { deviceId } });
+    return;
+  }
+  await prisma.spotifyConnection.update({ where: { partyId: connection.partyId }, data: { deviceId } });
+}
+
 async function getSpotifyAccessTokenForConnection(connection: {
   id?: string;
   partyId: string;
-  participantId?: string;
+  participantId?: string | null;
   accessToken: string;
   refreshToken: string;
   scope: string | null;
@@ -766,6 +901,59 @@ async function startNextTrack(partyId: string) {
     }),
   ]);
   await logEvent(partyId, "playback.started", { trackId: nextTrack.id });
+}
+
+async function playCurrentOrNextTrack(partyId: string) {
+  const playback = await prisma.playbackState.findUnique({ where: { partyId } });
+  if (!playback?.currentTrackId) {
+    await startNextTrack(partyId);
+    return;
+  }
+  if (playback.isPlaying) return;
+
+  const track = await prisma.track.findUnique({ where: { id: playback.currentTrackId } });
+  if (!track) {
+    await startNextTrack(partyId);
+    return;
+  }
+
+  assertTrackHasPlayableSource(track);
+  const resumePositionSeconds = playback.positionSeconds >= track.durationSeconds - 0.5 ? 0 : Math.max(0, playback.positionSeconds);
+  const spotifyPlayback = await startSpotifyTrackForParty(partyId, track, resumePositionSeconds);
+  assertSpotifyPlaybackStarted(track, spotifyPlayback);
+  await prisma.$transaction([
+    prisma.party.update({ where: { id: partyId }, data: { status: "live" } }),
+    prisma.track.update({ where: { id: track.id }, data: { status: "playing" } }),
+    prisma.playbackState.update({
+      where: { partyId },
+      data: {
+        startedAt: new Date(Date.now() - resumePositionSeconds * 1000),
+        pausedAt: null,
+        isPlaying: true,
+        positionSeconds: resumePositionSeconds,
+      },
+    }),
+  ]);
+  await logEvent(partyId, "playback.resumed", { trackId: track.id, positionSeconds: resumePositionSeconds });
+}
+
+async function pauseCurrentTrack(partyId: string) {
+  const playback = await prisma.playbackState.findUnique({ where: { partyId } });
+  if (!playback?.currentTrackId || !playback.isPlaying) return;
+
+  const track = await prisma.track.findUnique({ where: { id: playback.currentTrackId } });
+  const rawPositionSeconds = getPlaybackPositionSeconds(playback);
+  const positionSeconds = track ? Math.min(rawPositionSeconds, track.durationSeconds) : rawPositionSeconds;
+  await pauseSpotifyTrackForParty(partyId, track);
+  await prisma.playbackState.update({
+    where: { partyId },
+    data: {
+      isPlaying: false,
+      pausedAt: new Date(),
+      positionSeconds,
+    },
+  });
+  await logEvent(partyId, "playback.paused", { trackId: playback.currentTrackId, positionSeconds });
 }
 
 async function advanceTrack(partyId: string) {
@@ -818,6 +1006,10 @@ function assertSpotifyPlaybackStarted(
       ? "Spotify playback failed for every linked listener."
       : "Connect Spotify from at least one listener, open Spotify on that device, then start again.");
   throw new Error(message);
+}
+
+function hasSpotifyScope(scope: string | null, requiredScope: string) {
+  return new Set((scope ?? "").split(/\s+/).filter(Boolean)).has(requiredScope);
 }
 
 async function finalizeParty(partyId: string) {

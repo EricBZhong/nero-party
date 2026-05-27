@@ -90,7 +90,7 @@ Manual checks:
 3. Set `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, and `SPOTIFY_REDIRECT_URI`.
 4. Use a Spotify Premium host account that is allowlisted while the Spotify app is in development mode.
 5. In Nero, the host clicks `Connect Spotify` from Host controls.
-6. Open Spotify on the host device before pressing `Start` or `Advance`; Spotify returns a no-active-device error otherwise.
+6. Open this web room or Spotify on the playback device before pressing `Play`; Spotify returns a no-active-device error otherwise.
 
 ## Desktop Overlay
 

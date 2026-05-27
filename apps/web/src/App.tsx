@@ -5,8 +5,10 @@ import {
   AudioLines,
   ChevronRight,
   Clock,
+  Copy,
   Crown,
   Disc3,
+  Download,
   DoorOpen,
   GripVertical,
   Heart,
@@ -17,11 +19,13 @@ import {
   Minimize2,
   Music2,
   PanelRightOpen,
+  Pause,
   Play,
   Plus,
   Search,
   Shield,
   SlidersHorizontal,
+  SkipForward,
   Sparkles,
   Ticket,
   Trophy,
@@ -37,11 +41,14 @@ import {
   createParty,
   finalizeParty,
   getSpotifyStatus,
+  getSpotifyWebToken,
   getParty,
   joinParty,
+  pausePlayback,
   saveTrack,
   searchAudius,
   searchSpotify,
+  setSpotifyDevice,
   startPlayback,
   spotifyLoginUrl,
   updateRanking,
@@ -52,13 +59,36 @@ import {
 import { socket } from "./lib/socket";
 
 type Surface = "web" | "overlay";
-type FocusLayer = "submit" | "ranking" | "queue" | "overlay" | null;
+type FocusLayer = "submit" | "ranking" | "queue" | "saved" | "overlay" | null;
 type Flash = { tone: "good" | "warn" | "bad"; message: string } | null;
 type LeaveIntent = "room" | null;
+type SpotifyWebPlaybackState = "idle" | "starting" | "ready" | "unavailable";
+
+interface SpotifyWebPlayer {
+  connect(): Promise<boolean>;
+  disconnect(): void;
+  addListener(event: "ready", callback: (payload: { device_id: string }) => void): boolean;
+  addListener(event: "not_ready", callback: (payload: { device_id: string }) => void): boolean;
+  addListener(event: "initialization_error" | "authentication_error" | "account_error" | "playback_error", callback: (payload: { message: string }) => void): boolean;
+}
+
+declare global {
+  interface Window {
+    Spotify?: {
+      Player: new (options: {
+        name: string;
+        getOAuthToken: (callback: (token: string) => void) => void;
+        volume?: number;
+      }) => SpotifyWebPlayer;
+    };
+    onSpotifyWebPlaybackSDKReady?: () => void;
+  }
+}
 
 const route = parseRoute();
 const SILENT_AUDIO_DATA_URL =
   "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+let spotifySdkPromise: Promise<void> | null = null;
 
 function App() {
   const [partyCode, setPartyCode] = useState(route.code);
@@ -142,7 +172,9 @@ function App() {
 
   useEffect(() => {
     if (!participantToken || audioUnlocked) return;
-    const primeAudio = () => {
+    const primeAudio = (event: PointerEvent | KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-host-controls]")) return;
       void unlockAudio();
     };
     window.addEventListener("pointerdown", primeAudio, { once: true, capture: true });
@@ -161,14 +193,20 @@ function App() {
       audio.src = currentTrack.streamUrl;
     }
     if (Math.abs(audio.currentTime - targetPosition) > 2) {
-      audio.currentTime = clampPlaybackPosition(targetPosition, currentTrack.durationSeconds);
+      setAudioPosition(audio, targetPosition, currentTrack.durationSeconds);
     }
     if (state.playback.isPlaying) {
-      audio.play().catch(() => {
+      void audio.play().catch(() => {
         setAudioUnlocked(false);
         socket.emit("audio:ready", { participantToken, audioReady: false });
         setFlash({ tone: "warn", message: "Browser blocked audio. Click anywhere in the room to resume playback." });
       });
+      window.setTimeout(() => {
+        if (audio.paused) {
+          setAudioUnlocked(false);
+          socket.emit("audio:ready", { participantToken, audioReady: false });
+        }
+      }, 1000);
     } else {
       audio.pause();
     }
@@ -213,27 +251,35 @@ function App() {
   async function unlockAudio(trackToPrime?: Track | null) {
     const audio = audioRef.current;
     if (!audio) return false;
-    if (audioUnlocked) return true;
+    if (audioUnlocked && trackToPrime === undefined) return true;
 
-    const trackForAudio = trackToPrime ?? currentTrack;
     let unlocked = false;
     try {
       audio.muted = false;
-      if (!trackForAudio?.streamUrl) {
-        await primeAudioElement(audio);
-        unlocked = true;
-      } else {
+      const trackForAudio = trackToPrime ?? (state?.playback.isPlaying ? currentTrack : null);
+      if (trackForAudio?.streamUrl) {
         if (!audio.src.includes(trackForAudio.streamUrl)) {
           audio.src = trackForAudio.streamUrl;
+          audio.load();
         }
         const positionSeconds = trackForAudio.id === currentTrack?.id ? (state?.playback.positionSeconds ?? 0) : 0;
-        audio.currentTime = clampPlaybackPosition(positionSeconds, trackForAudio.durationSeconds);
-        await audio.play();
-        if (!state?.playback.isPlaying || trackForAudio.id !== currentTrack?.id) {
-          audio.pause();
-        }
-        unlocked = true;
+        setAudioPosition(audio, positionSeconds, trackForAudio.durationSeconds);
+        void audio.play().catch(() => {
+          setAudioUnlocked(false);
+          socket.emit("audio:ready", { participantToken, audioReady: false });
+          setFlash({ tone: "warn", message: "Browser blocked audio. Press Play again to resume playback." });
+        });
+        window.setTimeout(() => {
+          if (audio.paused) {
+            setAudioUnlocked(false);
+            socket.emit("audio:ready", { participantToken, audioReady: false });
+            setFlash({ tone: "warn", message: "Browser did not start audio. Press Play again." });
+          }
+        }, 1000);
+      } else {
+        await primeAudioElement(audio);
       }
+      unlocked = true;
     } catch {
       unlocked = false;
     }
@@ -277,6 +323,7 @@ function App() {
             participantToken={participantToken}
             currentTrack={currentTrack}
             isHost={isHost}
+            audioUnlocked={audioUnlocked}
             onUnlockAudio={unlockAudio}
             onFlash={setFlash}
             onStateChange={setState}
@@ -305,6 +352,7 @@ function AuthenticatedSurface({
   participantToken,
   currentTrack,
   isHost,
+  audioUnlocked,
   onUnlockAudio,
   onFlash,
   onStateChange,
@@ -317,6 +365,7 @@ function AuthenticatedSurface({
   participantToken: string;
   currentTrack: Track | null;
   isHost: boolean;
+  audioUnlocked: boolean;
   onUnlockAudio: (trackToPrime?: Track | null) => Promise<boolean>;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
@@ -330,6 +379,7 @@ function AuthenticatedSurface({
       participantToken={participantToken}
       currentTrack={currentTrack}
       onFlash={onFlash}
+      onStateChange={onStateChange}
       onExpand={onExpand}
       surface={surface}
     />
@@ -342,6 +392,7 @@ function AuthenticatedSurface({
       participantToken={participantToken}
       currentTrack={currentTrack}
       isHost={isHost}
+      audioUnlocked={audioUnlocked}
       onUnlockAudio={onUnlockAudio}
       onFlash={onFlash}
       onStateChange={onStateChange}
@@ -670,6 +721,7 @@ function FocusRoom({
   participantToken,
   currentTrack,
   isHost,
+  audioUnlocked,
   onUnlockAudio,
   onFlash,
   onStateChange,
@@ -680,6 +732,7 @@ function FocusRoom({
   participantToken: string;
   currentTrack: Track | null;
   isHost: boolean;
+  audioUnlocked: boolean;
   onUnlockAudio: (trackToPrime?: Track | null) => Promise<boolean>;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
@@ -696,6 +749,7 @@ function FocusRoom({
           participantToken={participantToken}
           currentTrack={currentTrack}
           isHost={isHost}
+          audioUnlocked={audioUnlocked}
           onUnlockAudio={onUnlockAudio}
           onFlash={onFlash}
           onStateChange={onStateChange}
@@ -703,6 +757,7 @@ function FocusRoom({
           onOpenSubmit={() => setLayer("submit")}
           onOpenRanking={() => setLayer("ranking")}
           onOpenQueue={() => setLayer("queue")}
+          onOpenSaved={() => setLayer("saved")}
           onOpenOverlay={() => setLayer("overlay")}
         />
       </section>
@@ -726,6 +781,12 @@ function FocusRoom({
         </DrawerLayer>
       ) : null}
 
+      {layer === "saved" ? (
+        <DrawerLayer title="Saved Songs" eyebrow="Your exportable playlist" onClose={() => setLayer(null)}>
+          <SavedSongsPanel state={state} participant={participant} onFlash={onFlash} />
+        </DrawerLayer>
+      ) : null}
+
       {layer === "overlay" ? (
         <ModalLayer title="Overlay preview" eyebrow="Multitasking layer" onClose={() => setLayer(null)} variant="overlay">
           <div className="overlay-preview-modal">
@@ -735,6 +796,7 @@ function FocusRoom({
               participantToken={participantToken}
               currentTrack={currentTrack}
               onFlash={onFlash}
+              onStateChange={onStateChange}
               onExpand={() => setLayer(null)}
               surface="overlay"
             />
@@ -751,6 +813,7 @@ function NowPlayingStage({
   participantToken,
   currentTrack,
   isHost,
+  audioUnlocked,
   onUnlockAudio,
   onFlash,
   onStateChange,
@@ -758,6 +821,7 @@ function NowPlayingStage({
   onOpenSubmit,
   onOpenRanking,
   onOpenQueue,
+  onOpenSaved,
   onOpenOverlay,
 }: {
   state: PartyState;
@@ -765,6 +829,7 @@ function NowPlayingStage({
   participantToken: string;
   currentTrack: Track | null;
   isHost: boolean;
+  audioUnlocked: boolean;
   onUnlockAudio: (trackToPrime?: Track | null) => Promise<boolean>;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
@@ -772,9 +837,11 @@ function NowPlayingStage({
   onOpenSubmit: () => void;
   onOpenRanking: () => void;
   onOpenQueue: () => void;
+  onOpenSaved: () => void;
   onOpenOverlay: () => void;
 }) {
-  const progress = currentTrack ? Math.min(100, Math.round((state.playback.positionSeconds / currentTrack.durationSeconds) * 100)) : 0;
+  const playbackSeconds = usePlaybackDisplaySeconds(state, currentTrack);
+  const progress = currentTrack ? Math.min(100, Math.round((playbackSeconds / currentTrack.durationSeconds) * 100)) : 0;
   const queuedPreview = state.tracks.find((track) => track.status === "queued") ?? null;
   const leadingWinner = state.winners[0] ?? null;
   const winnerTrack = leadingWinner ? state.tracks.find((track) => track.id === leadingWinner.trackId) ?? null : null;
@@ -793,11 +860,12 @@ function NowPlayingStage({
       : currentTrack
       ? `Queued by ${currentTrack.submittedByName}`
       : queuedPreview
-        ? `${waitingCount} waiting. Host can start when ready.`
+        ? `${waitingCount} waiting. Host can press play when ready.`
         : "Add an Audius track, Spotify track, or approved upload to light up the room.";
   const participantRanking = getParticipantRanking(state, participant.id);
   const topTracks = participantRanking.map((trackId) => state.tracks.find((track) => track.id === trackId)).filter(Boolean) as Track[];
   const projectedWinners = getProjectedWinners(state);
+  const stageTransitionKey = heroTrack?.id ?? stageLabel;
   return (
     <div className="stage-shell live-stage overflow-hidden">
       <div className="stage-orbit" aria-hidden />
@@ -813,6 +881,10 @@ function NowPlayingStage({
             <button className="brand-nav-button" onClick={onOpenQueue}>
               <ListMusic className="h-4 w-4" />
               Queue
+            </button>
+            <button className="brand-nav-button" onClick={onOpenSaved}>
+              <Heart className="h-4 w-4" />
+              Saved {savedCount ? savedCount : ""}
             </button>
             <SpotifyHeaderAction state={state} participantToken={participantToken} />
             <button className="brand-nav-button brand-nav-danger" onClick={onLeave}>
@@ -842,30 +914,32 @@ function NowPlayingStage({
             <QueuePreviewCard state={state} onOpenQueue={onOpenQueue} />
 
             <div className="now-playing-core">
-              <TrackArtwork track={heroTrack} size="large" />
-              <p className="mt-6 text-sm font-black uppercase tracking-[0.24em] text-nero-live/90">{stageLabel}</p>
-              <h1 className="stage-title mt-3 max-w-5xl break-words text-center text-5xl font-light leading-none sm:text-6xl xl:text-7xl">
-                {heroTrack?.title ?? "Queue is open."}
-              </h1>
-              <p className="mt-4 max-w-2xl text-center text-lg text-white/60 sm:text-2xl">
-                {heroTrack?.artist ?? "Listen together, save what lands, and keep a private running ballot."}
-              </p>
+              <div key={stageTransitionKey} className="song-stage-transition">
+                <TrackArtwork track={heroTrack} size="large" />
+                <p className="mt-6 text-sm font-black uppercase tracking-[0.24em] text-nero-live/90">{stageLabel}</p>
+                <h1 className="stage-title mt-3 max-w-5xl break-words text-center text-5xl font-light leading-none sm:text-6xl xl:text-7xl">
+                  {heroTrack?.title ?? "Queue is open."}
+                </h1>
+                <p className="mt-4 max-w-2xl text-center text-lg text-white/60 sm:text-2xl">
+                  {heroTrack?.artist ?? "Listen together, save what lands, and keep a private running ballot."}
+                </p>
 
-              <div className="mt-8 w-full max-w-3xl">
-                <div className="waveform-progress" aria-hidden>
-                  {Array.from({ length: 72 }).map((_, index) => (
-                    <span key={index} style={{ height: `${18 + ((index * 13) % 42)}%`, opacity: index / 72 <= progress / 100 ? 1 : 0.28 }} />
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3 text-sm text-white/55">
-                  <span>{currentTrack ? formatTime(state.playback.positionSeconds) : "0:00"}</span>
-                  <span>{currentTrack ? formatTime(currentTrack.durationSeconds) : isPreview ? "Ready" : "Waiting"}</span>
+                <div className="mt-8 w-full max-w-3xl">
+                  <div className="waveform-progress" aria-hidden>
+                    {Array.from({ length: 72 }).map((_, index) => (
+                      <span key={index} style={{ height: `${18 + ((index * 13) % 42)}%`, opacity: index / 72 <= progress / 100 ? 1 : 0.28 }} />
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 text-sm text-white/55">
+                    <span>{currentTrack ? formatTime(playbackSeconds) : "0:00"}</span>
+                    <span>{currentTrack ? formatTime(currentTrack.durationSeconds) : isPreview ? "Ready" : "Waiting"}</span>
+                  </div>
                 </div>
               </div>
 
               <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
                 {currentTrack ? (
-                  <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} />
+                  <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} onStateChange={onStateChange} />
                 ) : state.tracks.length === 0 ? (
                   <button className="primary-button h-12 px-6" onClick={onOpenSubmit}>
                     <Plus className="h-4 w-4" />
@@ -881,7 +955,15 @@ function NowPlayingStage({
 
               {isHost ? (
                 <div className="mt-5">
-                  <HostControls state={state} participantToken={participantToken} onFlash={onFlash} onStateChange={onStateChange} onPrimeAudio={onUnlockAudio} />
+                  <HostControls
+                    state={state}
+                    participantToken={participantToken}
+                    currentTrack={currentTrack}
+                    audioUnlocked={audioUnlocked}
+                    onFlash={onFlash}
+                    onStateChange={onStateChange}
+                    onPrimeAudio={onUnlockAudio}
+                  />
                 </div>
               ) : null}
             </div>
@@ -901,6 +983,24 @@ function NowPlayingStage({
       </div>
     </div>
   );
+}
+
+function usePlaybackDisplaySeconds(state: PartyState, currentTrack: Track | null) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const { playback } = state;
+
+  useEffect(() => {
+    setNowMs(Date.now());
+    if (!playback.isPlaying || !currentTrack) return undefined;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [currentTrack?.id, currentTrack?.durationSeconds, playback.currentTrackId, playback.isPlaying, playback.positionSeconds, playback.serverNow]);
+
+  if (!currentTrack) return 0;
+  const basePosition = getPlayableAudioPosition(playback.positionSeconds, currentTrack.durationSeconds);
+  const snapshotTime = Date.parse(playback.serverNow);
+  const elapsed = playback.isPlaying && Number.isFinite(snapshotTime) ? Math.max(0, (nowMs - snapshotTime) / 1000) : 0;
+  return Math.min(currentTrack.durationSeconds, basePosition + elapsed);
 }
 
 function StatPuck({ value, label }: { value: number; label: string }) {
@@ -1092,12 +1192,14 @@ function QuickActions({
   participantToken,
   track,
   onFlash,
+  onStateChange,
 }: {
   state: PartyState;
   participant: Participant;
   participantToken: string;
   track: Track;
   onFlash: (flash: Flash) => void;
+  onStateChange: (state: PartyState) => void;
 }) {
   const participantRanking = getParticipantRanking(state, participant.id);
   const saved = state.savedTracks.some((savedTrack) => savedTrack.participantId === participant.id && savedTrack.trackId === track.id);
@@ -1107,7 +1209,14 @@ function QuickActions({
     <>
       <button
         className={`secondary-button ${saved ? "action-confirmed" : ""}`}
-        onClick={() => saveTrack(participant.id, participantToken, track.id).then(() => onFlash({ tone: "good", message: "Saved to your party playlist." })).catch((error) => onFlash({ tone: "bad", message: getErrorMessage(error) }))}
+        onClick={() =>
+          saveTrack(participant.id, participantToken, track.id)
+            .then((result) => {
+              onStateChange(result.state);
+              onFlash({ tone: "good", message: "Saved to your party playlist." });
+            })
+            .catch((error) => onFlash({ tone: "bad", message: getErrorMessage(error) }))
+        }
       >
         <Heart className={`h-4 w-4 ${saved ? "fill-nero-live text-nero-live" : ""}`} />
         Save
@@ -1116,7 +1225,10 @@ function QuickActions({
         className={`primary-button ${isTopPick ? "action-confirmed" : ""}`}
         onClick={() =>
           updateRanking(participant.id, participantToken, putTrackInTopThree(participantRanking, track.id))
-            .then(() => onFlash({ tone: "good", message: "Moved into your Top 3." }))
+            .then((result) => {
+              onStateChange(result.state);
+              onFlash({ tone: "good", message: "Moved into your Top 3." });
+            })
             .catch((error) => onFlash({ tone: "bad", message: getErrorMessage(error) }))
         }
       >
@@ -1129,6 +1241,8 @@ function QuickActions({
 
 function SpotifyHeaderAction({ state, participantToken }: { state: PartyState; participantToken: string }) {
   const [status, setStatus] = useState<SpotifyStatus | null>(null);
+  const [webPlaybackState, setWebPlaybackState] = useState<SpotifyWebPlaybackState>("idle");
+  const hasStreamingScope = hasSpotifyScope(status?.scope ?? null, "streaming");
 
   useEffect(() => {
     let cancelled = false;
@@ -1146,16 +1260,102 @@ function SpotifyHeaderAction({ state, participantToken }: { state: PartyState; p
     };
   }, [state.party.id, participantToken]);
 
+  useEffect(() => {
+    if (!status?.configured || !status.connected || status.playbackReady || !hasStreamingScope) return;
+    let cancelled = false;
+    let player: SpotifyWebPlayer | null = null;
+
+    async function startBrowserPlaybackDevice() {
+      setWebPlaybackState("starting");
+      const { accessToken } = await getSpotifyWebToken(state.party.id, participantToken);
+      await loadSpotifyWebPlaybackSdk();
+      if (cancelled || !window.Spotify?.Player) return;
+
+      player = new window.Spotify.Player({
+        name: "Nero Party Web",
+        getOAuthToken: (callback) => callback(accessToken),
+        volume: 0.8,
+      });
+
+      player.addListener("ready", ({ device_id: deviceId }) => {
+        void setSpotifyDevice(state.party.id, participantToken, deviceId)
+          .then(() => {
+            if (cancelled) return;
+            setStatus((current) =>
+              current
+                ? {
+                    ...current,
+                    playbackReady: true,
+                    deviceName: "Nero Party Web",
+                    deviceCount: Math.max(current.deviceCount ?? 0, 1),
+                    deviceError: null,
+                  }
+                : current,
+            );
+            setWebPlaybackState("ready");
+          })
+          .catch(() => {
+            if (!cancelled) setWebPlaybackState("unavailable");
+          });
+      });
+      player.addListener("not_ready", () => {
+        if (!cancelled) setWebPlaybackState("unavailable");
+      });
+      const onPlayerError = ({ message }: { message: string }) => {
+        if (cancelled) return;
+        setStatus((current) => (current ? { ...current, playbackReady: false, deviceError: message } : current));
+        setWebPlaybackState("unavailable");
+      };
+      player.addListener("initialization_error", onPlayerError);
+      player.addListener("authentication_error", onPlayerError);
+      player.addListener("account_error", onPlayerError);
+      player.addListener("playback_error", onPlayerError);
+
+      const connected = await player.connect();
+      if (!connected && !cancelled) setWebPlaybackState("unavailable");
+    }
+
+    void startBrowserPlaybackDevice().catch((error) => {
+      if (cancelled) return;
+      setStatus((current) => (current ? { ...current, playbackReady: false, deviceError: getErrorMessage(error) } : current));
+      setWebPlaybackState("unavailable");
+    });
+
+    return () => {
+      cancelled = true;
+      player?.disconnect();
+    };
+  }, [hasStreamingScope, participantToken, state.party.id, status?.configured, status?.connected, status?.playbackReady]);
+
   if (!status?.configured) return null;
+
+  const connectedReady = Boolean(status.connected && status.playbackReady);
+  const connectedNotReady = Boolean(status.connected && !status.playbackReady);
+  const label = !status.connected
+    ? "Connect Spotify"
+    : connectedReady
+      ? "Spotify ready"
+      : !hasStreamingScope
+        ? "Reconnect Spotify"
+      : webPlaybackState === "starting"
+        ? "Starting Spotify"
+        : "Open Spotify";
+  const title = !status.connected
+    ? "Connect Spotify"
+    : connectedReady
+      ? `Spotify ready${status.deviceName ? ` on ${status.deviceName}` : ""}`
+      : !hasStreamingScope
+        ? "Reconnect Spotify once so Nero can request browser playback permission."
+      : status.deviceError ?? "Keep this tab open, or open Spotify desktop/mobile so Nero can target a playback device.";
 
   return (
     <a
-      className={`spotify-header-button ${status.connected ? "spotify-header-button-connected" : ""}`}
+      className={`spotify-header-button ${connectedReady ? "spotify-header-button-connected" : ""} ${connectedNotReady ? "spotify-header-button-warning" : ""}`}
       href={spotifyLoginUrl(state.party.id, participantToken)}
-      title={status.connected ? `Spotify connected${status.displayName ? ` as ${status.displayName}` : ""}` : "Connect Spotify"}
+      title={title}
     >
-      <Disc3 className="h-4 w-4" />
-      <span>{status.connected ? "Spotify connected" : "Connect Spotify"}</span>
+      {webPlaybackState === "starting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Disc3 className="h-4 w-4" />}
+      <span>{label}</span>
     </a>
   );
 }
@@ -1213,6 +1413,74 @@ function BallotPreview({
   );
 }
 
+function SavedSongsPanel({ state, participant, onFlash }: { state: PartyState; participant: Participant; onFlash: (flash: Flash) => void }) {
+  const savedTracks = getSavedTracks(state, participant.id);
+  const exportText = formatSavedSongsExport(savedTracks, state.party.title);
+  const csvText = formatSavedSongsCsv(savedTracks);
+
+  async function copySavedSongs() {
+    if (!savedTracks.length) {
+      onFlash({ tone: "warn", message: "Save a song first, then export your list." });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(exportText);
+      onFlash({ tone: "good", message: "Saved songs copied." });
+    } catch {
+      downloadTextFile(`nero-${state.party.code}-saved-songs.txt`, exportText, "text/plain;charset=utf-8");
+      onFlash({ tone: "good", message: "Clipboard was unavailable, so Nero downloaded your saved list." });
+    }
+  }
+
+  function downloadSavedSongs() {
+    if (!savedTracks.length) {
+      onFlash({ tone: "warn", message: "Save a song first, then export your list." });
+      return;
+    }
+    downloadTextFile(`nero-${state.party.code}-saved-songs.csv`, csvText, "text/csv;charset=utf-8");
+    onFlash({ tone: "good", message: "Saved songs exported." });
+  }
+
+  return (
+    <section className="drawer-section saved-songs-surface">
+      <div className="side-card-header">
+        <div className="min-w-0">
+          <p className="side-card-kicker">Saved songs</p>
+          <h3>{savedTracks.length} saved</h3>
+          <p className="side-card-copy">Export your party playlist any time, even after End Game.</p>
+        </div>
+        <Heart className="h-5 w-5 text-nero-live" />
+      </div>
+
+      <div className="saved-export-actions">
+        <button className="secondary-button" onClick={copySavedSongs}>
+          <Copy className="h-4 w-4" />
+          Copy list
+        </button>
+        <button className="primary-button" onClick={downloadSavedSongs}>
+          <Download className="h-4 w-4" />
+          Download CSV
+        </button>
+      </div>
+
+      <div className="saved-song-list">
+        {savedTracks.map((track, index) => (
+          <div key={track.id} className="saved-song-row">
+            <span className="queue-row-index">{index + 1}</span>
+            <TrackThumb track={track} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">{track.title}</p>
+              <p className="truncate text-xs text-nero-mist">{track.artist}</p>
+            </div>
+            <span className="queue-row-duration">{formatDurationCompact(track.durationSeconds)}</span>
+          </div>
+        ))}
+        {!savedTracks.length ? <div className="source-empty-state">Saved songs land here when you tap Save during playback.</div> : null}
+      </div>
+    </section>
+  );
+}
+
 function LeaderboardPreview({ state, projectedWinners }: { state: PartyState; projectedWinners: ReturnType<typeof getProjectedWinners> }) {
   const leaders = state.party.status === "finalized" ? state.winners.slice(0, 3) : projectedWinners.slice(0, 3);
   const ballotCount =
@@ -1261,35 +1529,44 @@ function LeaderboardPreview({ state, projectedWinners }: { state: PartyState; pr
 function HostControls({
   state,
   participantToken,
+  currentTrack,
+  audioUnlocked,
   onFlash,
   onStateChange,
   onPrimeAudio,
 }: {
   state: PartyState;
   participantToken: string;
+  currentTrack: Track | null;
+  audioUnlocked: boolean;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
   onPrimeAudio: (trackToPrime?: Track | null) => Promise<boolean>;
 }) {
-  const [busyAction, setBusyAction] = useState<"start" | "advance" | "finale" | null>(null);
+  const [busyAction, setBusyAction] = useState<"play" | "skip" | "end" | null>(null);
   const queuedTracks = state.tracks.filter((track) => track.status === "queued");
   const queuedCount = queuedTracks.length;
   const nextQueuedTrack = queuedTracks[0] ?? null;
   const hasCurrentTrack = Boolean(state.playback.currentTrackId);
-  const canStart = queuedCount > 0 && !hasCurrentTrack && state.party.status !== "finalized";
-  const canAdvance = state.party.status !== "finalized" && (hasCurrentTrack || queuedCount > 0);
-  const canFinalize = state.party.status !== "finalized";
+  const isPlaying = state.playback.isPlaying;
+  const isFinalized = state.party.status === "finalized";
+  const trackToPrime = currentTrack ?? nextQueuedTrack;
+  const needsLocalAudioResume = isPlaying && currentTrack?.sourceType !== "spotify" && !audioUnlocked;
+  const playButtonIsPause = isPlaying && !needsLocalAudioResume;
+  const canPlayPause = !isFinalized && (hasCurrentTrack || queuedCount > 0);
+  const canSkip = !isFinalized && (hasCurrentTrack || queuedCount > 0);
+  const canEnd = !isFinalized;
 
-  const common = async (action: "start" | "advance" | "finale", run: () => Promise<{ state: PartyState }>, message: string) => {
+  const common = async (action: "play" | "skip" | "end", run: () => Promise<{ state: PartyState }>, message: string) => {
     if (busyAction) return;
     setBusyAction(action);
     try {
-      if (action !== "finale" && nextQueuedTrack?.sourceType !== "spotify") {
-        if (!nextQueuedTrack?.streamUrl) {
+      if ((action === "play" || action === "skip") && !isPlaying && trackToPrime?.sourceType !== "spotify") {
+        if (!trackToPrime?.streamUrl) {
           onFlash({ tone: "bad", message: "This track does not have a playable browser audio URL. Add another source." });
           return;
         }
-        const audioReady = await onPrimeAudio(nextQueuedTrack);
+        const audioReady = await onPrimeAudio(trackToPrime);
         if (!audioReady) return;
       }
       const result = await run();
@@ -1303,20 +1580,43 @@ function HostControls({
   };
 
   return (
-    <div className="host-strip">
+    <div className="host-strip" data-host-controls>
       <span className="host-strip-label">Host controls</span>
       <div className="host-strip-actions">
-        <button className="primary-button" disabled={!canStart || Boolean(busyAction)} onClick={() => void common("start", () => startPlayback(state.party.id, participantToken), "Playback started.")}>
-          {busyAction === "start" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {busyAction === "start" ? "Starting" : "Start"}
+        <button
+          className="primary-button playback-round-button"
+          disabled={!canPlayPause || Boolean(busyAction)}
+          onClick={() =>
+            void common(
+              "play",
+              async () => {
+                if (needsLocalAudioResume) {
+                  const audioReady = await onPrimeAudio(currentTrack);
+                  if (!audioReady) throw new Error("Browser blocked audio. Press Play again.");
+                  return { state };
+                }
+                return playButtonIsPause ? pausePlayback(state.party.id, participantToken) : startPlayback(state.party.id, participantToken);
+              },
+              needsLocalAudioResume ? "Audio resumed." : playButtonIsPause ? "Playback paused." : "Playback started.",
+            )
+          }
+          title={playButtonIsPause ? "Pause" : "Play"}
+          aria-label={playButtonIsPause ? "Pause" : "Play"}
+        >
+          {busyAction === "play" ? <Loader2 className="h-4 w-4 animate-spin" /> : playButtonIsPause ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
         </button>
-        <button className="secondary-button" disabled={!canAdvance || Boolean(busyAction)} onClick={() => void common("advance", () => advancePlayback(state.party.id, participantToken), "Advanced queue.")}>
-          {busyAction === "advance" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
-          {busyAction === "advance" ? "Advancing" : "Advance"}
+        <button
+          className="secondary-button playback-icon-button"
+          disabled={!canSkip || Boolean(busyAction)}
+          onClick={() => void common("skip", () => advancePlayback(state.party.id, participantToken), "Skipped to next track.")}
+          title="Skip to next track"
+          aria-label="Skip to next track"
+        >
+          {busyAction === "skip" ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4 fill-current" />}
         </button>
-        <button className="secondary-button" disabled={!canFinalize || Boolean(busyAction)} onClick={() => void common("finale", () => finalizeParty(state.party.id, participantToken), "Final ballot locked.")}>
-          {busyAction === "finale" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trophy className="h-4 w-4" />}
-          {busyAction === "finale" ? "Locking" : "Finale"}
+        <button className="secondary-button" disabled={!canEnd || Boolean(busyAction)} onClick={() => void common("end", () => finalizeParty(state.party.id, participantToken), "Game ended. Final ballot locked.")}>
+          {busyAction === "end" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trophy className="h-4 w-4" />}
+          {busyAction === "end" ? "Ending" : "End Game"}
         </button>
       </div>
     </div>
@@ -1416,6 +1716,7 @@ function CompanionRoom({
   participantToken,
   currentTrack,
   onFlash,
+  onStateChange,
   onExpand,
   surface = "web",
 }: {
@@ -1424,6 +1725,7 @@ function CompanionRoom({
   participantToken: string;
   currentTrack: Track | null;
   onFlash: (flash: Flash) => void;
+  onStateChange: (state: PartyState) => void;
   onExpand: () => void;
   surface?: Surface;
 }) {
@@ -1472,11 +1774,11 @@ function CompanionRoom({
 
           {currentTrack ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} />
+              <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} onStateChange={onStateChange} />
             </div>
           ) : (
             <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.035] px-4 py-5 text-sm text-white/55">
-              Start playback in Focus Mode or wait for the host.
+              Press play in Focus Mode or wait for the host.
             </div>
           )}
 
@@ -1932,7 +2234,13 @@ function SubmissionPanel({
 
       {sourceTab === "spotify" || sourceTab === "audius" ? (
         <div className="mt-4 grid gap-3">
-          <div className="flex gap-2">
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runSearch();
+            }}
+          >
             <input
               className="field"
               value={query}
@@ -1940,15 +2248,15 @@ function SubmissionPanel({
               placeholder={sourceTab === "spotify" ? "Search Spotify" : "Search Audius"}
             />
             <button
+              type="submit"
               className="icon-button h-11 w-11"
-              onClick={runSearch}
               disabled={loading}
               title={sourceTab === "spotify" ? "Search Spotify" : "Search Audius"}
               aria-label={sourceTab === "spotify" ? "Search Spotify" : "Search Audius"}
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             </button>
-          </div>
+          </form>
           <div className="max-h-64 overflow-y-auto pr-1">
             <div className="grid gap-2">
               {results.map((track) => {
@@ -2137,6 +2445,44 @@ function getListenedTracks(state: PartyState) {
   return state.tracks.filter((track) => track.status === "played" || track.status === "playing").sort((a, b) => b.queuePosition - a.queuePosition);
 }
 
+function getSavedTracks(state: PartyState, participantId: string) {
+  const trackById = new Map(state.tracks.map((track) => [track.id, track]));
+  return state.savedTracks
+    .filter((savedTrack) => savedTrack.participantId === participantId)
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+    .map((savedTrack) => trackById.get(savedTrack.trackId))
+    .filter(Boolean) as Track[];
+}
+
+function formatSavedSongsExport(tracks: Track[], partyTitle: string) {
+  const lines = [`Nero Party saved songs - ${partyTitle}`, ""];
+  tracks.forEach((track, index) => {
+    lines.push(`${index + 1}. ${track.title} - ${track.artist}`);
+  });
+  return lines.join("\n");
+}
+
+function formatSavedSongsCsv(tracks: Track[]) {
+  const rows = [["Rank", "Title", "Artist", "Source", "Duration Seconds"]];
+  tracks.forEach((track, index) => {
+    rows.push([String(index + 1), track.title, track.artist, track.sourceType, String(track.durationSeconds)]);
+  });
+  return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function downloadTextFile(fileName: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function getLimitStats(state: PartyState, participantId: string) {
   const totalTracks = state.tracks.length;
   const totalSeconds = state.tracks.reduce((sum, track) => sum + track.durationSeconds, 0);
@@ -2188,6 +2534,27 @@ function clampPlaybackPosition(positionSeconds: number, durationSeconds: number)
   return Math.max(0, Math.min(positionSeconds, maxPosition));
 }
 
+function getPlayableAudioPosition(positionSeconds: number, durationSeconds: number) {
+  if (positionSeconds >= durationSeconds - 0.5) return 0;
+  return clampPlaybackPosition(positionSeconds, durationSeconds);
+}
+
+function setAudioPosition(audio: HTMLAudioElement, positionSeconds: number, durationSeconds: number) {
+  try {
+    audio.currentTime = getPlayableAudioPosition(positionSeconds, durationSeconds);
+  } catch {
+    // Some streamed sources reject seeking before metadata is available. Playback can still start at 0.
+  }
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
+function hasSpotifyScope(scope: string | null, requiredScope: string) {
+  return new Set((scope ?? "").split(/\s+/).filter(Boolean)).has(requiredScope);
+}
+
 async function primeAudioElement(audio: HTMLAudioElement) {
   const previousSrc = audio.getAttribute("src");
   const previousVolume = audio.volume;
@@ -2199,7 +2566,14 @@ async function primeAudioElement(audio: HTMLAudioElement) {
   audio.muted = false;
 
   try {
-    await audio.play();
+    const played = await Promise.race([
+      audio.play().then(
+        () => true,
+        () => false,
+      ),
+      wait(500).then(() => true),
+    ]);
+    if (!played) throw new Error("Audio prime failed.");
     audio.pause();
     audio.currentTime = 0;
   } finally {
@@ -2212,6 +2586,34 @@ async function primeAudioElement(audio: HTMLAudioElement) {
       audio.load();
     }
   }
+}
+
+function loadSpotifyWebPlaybackSdk() {
+  if (window.Spotify?.Player) return Promise.resolve();
+  if (spotifySdkPromise) return spotifySdkPromise;
+
+  spotifySdkPromise = new Promise((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[src="https://sdk.scdn.co/spotify-player.js"]');
+    const previousReady = window.onSpotifyWebPlaybackSDKReady;
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      previousReady?.();
+      resolve();
+    };
+    if (existingScript) {
+      existingScript.addEventListener("error", () => reject(new Error("Spotify browser player failed to load.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://sdk.scdn.co/spotify-player.js";
+    script.async = true;
+    script.onerror = () => reject(new Error("Spotify browser player failed to load."));
+    document.body.appendChild(script);
+  });
+  spotifySdkPromise.catch(() => {
+    spotifySdkPromise = null;
+  });
+
+  return spotifySdkPromise;
 }
 
 function formatTime(seconds: number) {

@@ -657,6 +657,11 @@ button:disabled {
     @apply flex min-w-0 flex-col items-center self-center px-1 py-4 sm:px-3 xl:px-0;
   }
 
+  .song-stage-transition {
+    @apply flex w-full flex-col items-center;
+    animation: song-stage-swap 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .stage-queue-card,
   .ballot-preview-card,
   .leaderboard-card {
@@ -772,6 +777,10 @@ button:disabled {
 
   .spotify-header-button-connected {
     @apply border-nero-live/35 bg-nero-live/10 text-[#bdffc2];
+  }
+
+  .spotify-header-button-warning {
+    @apply border-nero-warning/45 bg-nero-warning/10 text-nero-warning;
   }
 
   .side-card-header {
@@ -1038,6 +1047,14 @@ button:disabled {
 
   .host-strip-actions {
     @apply flex flex-wrap items-center justify-center gap-2;
+  }
+
+  .playback-round-button {
+    @apply h-12 w-12 rounded-full px-0;
+  }
+
+  .playback-icon-button {
+    @apply h-12 w-12 rounded-full px-0 text-white/70;
   }
 
   .spotify-host-button {
@@ -1381,6 +1398,22 @@ button:disabled {
     @apply bg-[#1e2020]/40;
   }
 
+  .saved-songs-surface {
+    @apply grid gap-4 p-4;
+  }
+
+  .saved-export-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .saved-song-list {
+    @apply grid max-h-[58dvh] gap-2 overflow-y-auto pr-1;
+  }
+
+  .saved-song-row {
+    @apply grid min-h-16 grid-cols-[40px_44px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 py-2;
+  }
+
   .queue-drawer-section {
     @apply grid gap-3;
   }
@@ -1606,6 +1639,23 @@ button:disabled {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes song-stage-swap {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(14px) scale(0.985);
+  }
+  55% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scale(1);
   }
 }
 

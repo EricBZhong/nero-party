@@ -16,7 +16,7 @@ export const env = {
   SPOTIFY_REDIRECT_URI:
     process.env.SPOTIFY_REDIRECT_URI ?? `${process.env.PUBLIC_API_URL ?? `http://localhost:${process.env.PORT ?? 3000}`}/api/spotify/callback`,
   SPOTIFY_SCOPES:
-    process.env.SPOTIFY_SCOPES ?? "user-modify-playback-state user-read-playback-state user-read-currently-playing",
+    process.env.SPOTIFY_SCOPES ?? "streaming user-modify-playback-state user-read-playback-state user-read-currently-playing",
   DISCORD_TOKEN: process.env.DISCORD_TOKEN ?? "",
   DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID ?? "",
   DISCORD_PUBLIC_KEY: process.env.DISCORD_PUBLIC_KEY ?? "",
