@@ -191,6 +191,7 @@ function App() {
       setPartyCode(created.partyCode);
       setState(created.state);
       window.history.replaceState(null, "", `/party/${created.partyCode}`);
+      window.scrollTo({ top: 0, left: 0 });
     } catch (error) {
       setFlash({ tone: "bad", message: getErrorMessage(error) });
     } finally {
@@ -208,6 +209,7 @@ function App() {
       setPartyCode(code.toUpperCase());
       setState(joined.state);
       window.history.replaceState(null, "", route.surface === "overlay" ? `/companion/${code.toUpperCase()}?source=overlay` : `/party/${code.toUpperCase()}`);
+      window.scrollTo({ top: 0, left: 0 });
     } catch (error) {
       setFlash({ tone: "bad", message: getErrorMessage(error) });
     } finally {
@@ -417,45 +419,48 @@ function Entry({
   };
 
   return (
-    <section className="entry-experience z-10 flex flex-1 flex-col gap-8 py-6 sm:py-10">
+    <section className="entry-experience entry-stitch z-10 flex flex-1 flex-col">
+      <header className="entry-brand-bar">
+        <span className="entry-wordmark">NERO PARTY</span>
+        <button
+          className="entry-about-button"
+          type="button"
+          onClick={() => setTab(tab === "create" ? "join" : "create")}
+        >
+          {tab === "create" ? "Join room" : "Create room"}
+        </button>
+      </header>
+
       <div className="setup-shell">
         <div className="setup-console">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-nero-live">Nero Party</p>
-              <h2 className="entry-headline mt-2 max-w-xl text-4xl font-light leading-[0.95] sm:text-6xl">
-                <span className="block">Keep the</span>
-                <RotatingPhrase words={rotatingMoments} />
-                <span className="block">in sync.</span>
-              </h2>
-            </div>
-            <div className="inline-grid grid-flow-col rounded-md border border-white/10 bg-white/[0.04] p-1">
-              <button
-                className={`inline-flex h-9 items-center justify-center gap-2 rounded px-3 text-sm font-semibold transition ${tab === "create" ? "bg-nero-live text-nero-ink" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
-                onClick={() => setTab("create")}
-                type="button"
-              >
-                <Plus className="h-4 w-4" />
-                Create
-              </button>
-              <button
-                className={`inline-flex h-9 items-center justify-center gap-2 rounded px-3 text-sm font-semibold transition ${tab === "join" ? "bg-nero-live text-nero-ink" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
-                onClick={() => setTab("join")}
-                type="button"
-              >
-                <DoorOpen className="h-4 w-4" />
-                Join
-              </button>
-            </div>
+          <div className="entry-copy-block">
+            <p className="entry-kicker">{routeCode ? "Invite detected" : "Live listening room"}</p>
+            <h1 className="entry-headline">Nero afterhours starts here.</h1>
+            <p className="entry-subcopy">Add songs, rank your Top 3, reveal the track everyone remembers.</p>
           </div>
 
-          <div className="mt-7 grid gap-3 sm:grid-cols-3">
-            <MetricTile label="Song cap" value={`${maxQueueSize} tracks`} icon={ListMusic} />
-            <MetricTile label="Timebox" value={`${maxDurationMinutes} min`} icon={Clock} />
-            <MetricTile label="Sources" value={formatEnabledSources(pendingSettings)} icon={Shield} />
+          <div className="entry-tab-switch" role="tablist" aria-label="Room action">
+            <button
+              className={tab === "create" ? "entry-tab-active" : ""}
+              onClick={() => setTab("create")}
+              type="button"
+              role="tab"
+              aria-selected={tab === "create"}
+            >
+              Create Room
+            </button>
+            <button
+              className={tab === "join" ? "entry-tab-active" : ""}
+              onClick={() => setTab("join")}
+              type="button"
+              role="tab"
+              aria-selected={tab === "join"}
+            >
+              Join Room
+            </button>
           </div>
 
-          <div className="mt-8 rounded-[28px] border border-white/10 bg-black/30 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] sm:p-5">
+          <div className="setup-form-shell">
             {tab === "create" ? (
               <form
                 className="grid gap-4"
@@ -565,7 +570,7 @@ function Entry({
                 </div>
                 <button className="hero-cta h-12 justify-center" disabled={loading}>
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Create party
+                  Launch party
                 </button>
               </form>
             ) : (
@@ -605,9 +610,6 @@ function Entry({
 
         <SetupPreview title={tab === "create" ? title : "Listening party"} mode={mode} tab={tab} settings={pendingSettings} />
       </div>
-
-      <SurfacePreviewStrip />
-      <NeroFeatureWall />
     </section>
   );
 }
@@ -724,7 +726,8 @@ function SetupPreview({ title, mode, tab, settings }: { title: string; mode: Par
     <aside className="setup-preview">
       <img className="setup-preview-photo" src="/assets/login-hero.png" alt="" />
       <div className="setup-preview-shade" aria-hidden />
-      <div className="relative flex h-full flex-col justify-between gap-6 p-5 sm:p-7">
+      <div className="setup-preview-scanlines" aria-hidden />
+      <div className="relative flex h-full flex-col justify-between gap-6 p-5 sm:p-8">
         <div className="flex items-center justify-between gap-3">
           <div className="live-context-pill">
             <span className="live-dot" />
@@ -735,7 +738,30 @@ function SetupPreview({ title, mode, tab, settings }: { title: string; mode: Par
           </span>
         </div>
 
-        <div className="setup-preview-spacer" aria-hidden />
+        <div className="preview-console-card" aria-label="Room preview">
+          <div className="preview-console-top">
+            <span />
+            <span />
+            <span />
+            <strong>LIVE PREVIEW</strong>
+          </div>
+          <div className="preview-console-body">
+            <div className="preview-album-tile">
+              <Disc3 className="h-8 w-8" />
+            </div>
+            <div className="min-w-0">
+              <p>{tab === "create" ? "Ready to create" : "Ready to join"}</p>
+              <h3>{title || "Untitled party"}</h3>
+              <div className="preview-progress" aria-hidden>
+                <span />
+              </div>
+            </div>
+          </div>
+          <div className="preview-console-footer">
+            <span><Users className="h-4 w-4" /> 12 listeners</span>
+            <span>{formatEnabledSources(settings)}</span>
+          </div>
+        </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
           <div>
@@ -904,19 +930,19 @@ function FocusRoom({
       </section>
 
       {layer === "submit" ? (
-        <ModalLayer title="Add a song" eyebrow="Audius or upload" onClose={() => setLayer(null)}>
+        <ModalLayer title="Add Song" eyebrow="Audius, Spotify, or upload" onClose={() => setLayer(null)}>
           <SubmissionPanel state={state} participant={participant} participantToken={participantToken} onFlash={onFlash} modal onTrackAdded={() => setLayer(null)} />
         </ModalLayer>
       ) : null}
 
       {layer === "ranking" ? (
-        <DrawerLayer title="Your Top 3" eyebrow="Private ranking" onClose={() => setLayer(null)}>
+        <DrawerLayer title="Modify Top 3" eyebrow="Private ranking" onClose={() => setLayer(null)}>
           <RankingBay state={state} participant={participant} participantToken={participantToken} tracks={listenedTracks} onFlash={onFlash} drawer />
         </DrawerLayer>
       ) : null}
 
       {layer === "queue" ? (
-        <DrawerLayer title="Room queue" eyebrow="Shared playback" onClose={() => setLayer(null)}>
+        <DrawerLayer title="Full Queue" eyebrow="Shared playback" onClose={() => setLayer(null)} side="left">
           <QueueRail state={state} drawer />
           <ParticipantRail state={state} drawer />
         </DrawerLayer>
@@ -998,102 +1024,105 @@ function NowPlayingStage({
     <div className="stage-shell live-stage overflow-hidden">
       <div className="stage-orbit" aria-hidden />
       <div className="stage-light-beams" aria-hidden />
-      <div className="relative grid min-h-[calc(100dvh-4rem)] gap-6 p-4 sm:p-5 lg:p-7">
-        <div className="stage-topline">
-          <div className="min-w-0">
-            <div className="live-context-pill">
-              <span className="live-dot" />
-              Live room
-              <span>Web</span>
-              <span>Overlay</span>
-              <span>{state.party.code}</span>
-            </div>
-            <h2 className="mt-4 max-w-4xl truncate text-3xl font-light sm:text-5xl">{state.party.title}</h2>
-            <p className="mt-2 truncate text-sm text-white/55">{stageNote}</p>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button className="secondary-button" onClick={onOpenSubmit}>
+      <div className="relative grid min-h-[calc(100dvh-2rem)] gap-7">
+        <header className="brand-appbar">
+          <span className="brand-wordmark">NERO PARTY</span>
+          <nav className="brand-nav" aria-label="Room actions">
+            <button className="brand-nav-button" onClick={onOpenSubmit}>
               <Plus className="h-4 w-4" />
-              Add song
+              Add Song
             </button>
-            <button className="secondary-button" onClick={onOpenQueue}>
+            <button className="brand-nav-button" onClick={onOpenQueue}>
               <ListMusic className="h-4 w-4" />
-              Full queue
-            </button>
-            <button className="secondary-button" onClick={() => onOpenOverlay()}>
-              <Minimize2 className="h-4 w-4" />
-              Overlay
+              Queue
             </button>
             <SpotifyHeaderAction state={state} participantToken={participantToken} />
-            <button className="icon-button" onClick={onLeave} title="Leave room" aria-label="Leave room">
+            <button className="brand-nav-button brand-nav-danger" onClick={onLeave}>
               <DoorOpen className="h-4 w-4" />
+              Leave
             </button>
+          </nav>
+          <button className="brand-icon-button" onClick={() => onOpenOverlay()} title="Open overlay preview" aria-label="Open overlay preview">
+            <Minimize2 className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="stage-room-heading">
+          <div className="live-context-pill">
+            <span className="live-dot" />
+            Live room
+            <span>Web</span>
+            <span>{state.party.code}</span>
           </div>
+          <h2>{state.party.title}</h2>
+          <p>{stageNote}</p>
         </div>
 
-        <div className="live-room-main">
-          <QueuePreviewCard state={state} onOpenQueue={onOpenQueue} />
+        {isFinalized ? (
+          <div className="finale-room-wrap">
+            <Winners state={state} />
+          </div>
+        ) : (
+          <div className="live-room-main">
+            <QueuePreviewCard state={state} onOpenQueue={onOpenQueue} />
 
-          <div className="now-playing-core">
-            <TrackArtwork track={heroTrack} size="large" />
-            <p className="mt-6 text-sm font-black uppercase tracking-[0.24em] text-nero-live/90">{stageLabel}</p>
-            <h1 className="stage-title mt-3 max-w-5xl break-words text-center text-5xl font-light leading-none sm:text-7xl xl:text-8xl">
-              {heroTrack?.title ?? "What belongs in your Top 3?"}
-            </h1>
-            <p className="mt-4 max-w-2xl text-center text-lg text-white/60 sm:text-2xl">
-              {isFinalized && leadingWinner
-                ? `${leadingWinner.score} points. ${leadingWinner.firstPlaceVotes} first-place vote${leadingWinner.firstPlaceVotes === 1 ? "" : "s"}.`
-                : heroTrack?.artist ?? "Listen together, save what lands, and keep a private running ballot."}
-            </p>
+            <div className="now-playing-core">
+              <TrackArtwork track={heroTrack} size="large" />
+              <p className="mt-6 text-sm font-black uppercase tracking-[0.24em] text-nero-live/90">{stageLabel}</p>
+              <h1 className="stage-title mt-3 max-w-5xl break-words text-center text-5xl font-light leading-none sm:text-6xl xl:text-7xl">
+                {heroTrack?.title ?? "Queue is open."}
+              </h1>
+              <p className="mt-4 max-w-2xl text-center text-lg text-white/60 sm:text-2xl">
+                {heroTrack?.artist ?? "Listen together, save what lands, and keep a private running ballot."}
+              </p>
 
-            <div className="mt-8 w-full max-w-3xl">
-              <div className="waveform-progress" aria-hidden>
-                {Array.from({ length: 72 }).map((_, index) => (
-                  <span key={index} style={{ height: `${18 + ((index * 13) % 42)}%`, opacity: index / 72 <= progress / 100 ? 1 : 0.28 }} />
-                ))}
+              <div className="mt-8 w-full max-w-3xl">
+                <div className="waveform-progress" aria-hidden>
+                  {Array.from({ length: 72 }).map((_, index) => (
+                    <span key={index} style={{ height: `${18 + ((index * 13) % 42)}%`, opacity: index / 72 <= progress / 100 ? 1 : 0.28 }} />
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3 text-sm text-white/55">
+                  <span>{currentTrack ? formatTime(state.playback.positionSeconds) : "0:00"}</span>
+                  <span>{currentTrack ? formatTime(currentTrack.durationSeconds) : isPreview ? "Ready" : "Waiting"}</span>
+                </div>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-3 text-sm text-white/55">
-                <span>{currentTrack ? formatTime(state.playback.positionSeconds) : "0:00"}</span>
-                <span>{currentTrack ? formatTime(currentTrack.durationSeconds) : isPreview ? "Ready" : "Waiting"}</span>
+
+              <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+                {currentTrack ? (
+                  <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} />
+                ) : state.tracks.length === 0 ? (
+                  <button className="primary-button h-12 px-6" onClick={onOpenSubmit}>
+                    <Plus className="h-4 w-4" />
+                    Add first song
+                  </button>
+                ) : (
+                  <button className="secondary-button h-12 px-5" onClick={onOpenSubmit}>
+                    <Plus className="h-4 w-4" />
+                    Add another
+                  </button>
+                )}
               </div>
+
+              {isHost ? (
+                <div className="mt-5">
+                  <HostControls state={state} participantToken={participantToken} onFlash={onFlash} onStateChange={onStateChange} onPrimeAudio={onUnlockAudio} />
+                </div>
+              ) : null}
             </div>
 
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              {currentTrack ? (
-                <QuickActions state={state} participant={participant} participantToken={participantToken} track={currentTrack} onFlash={onFlash} />
-              ) : state.tracks.length === 0 ? (
-                <button className="primary-button h-12 px-6" onClick={onOpenSubmit}>
-                  <Plus className="h-4 w-4" />
-                  Add first song
-                </button>
-              ) : (
-                <button className="secondary-button h-12 px-5" onClick={onOpenSubmit}>
-                  <Plus className="h-4 w-4" />
-                  Add another
-                </button>
-              )}
+            <div className="live-side-stack">
+              <BallotPreview
+                heroTrack={heroTrack}
+                topTracks={topTracks}
+                savedCount={savedCount}
+                ownPosition={ownPosition}
+                onOpenRanking={onOpenRanking}
+              />
+              <LeaderboardPreview state={state} projectedWinners={projectedWinners} />
             </div>
-
-            {isHost ? (
-              <div className="mt-5">
-                <HostControls state={state} participantToken={participantToken} onFlash={onFlash} onStateChange={onStateChange} onPrimeAudio={onUnlockAudio} />
-              </div>
-            ) : null}
           </div>
-
-          <div className="live-side-stack">
-            <BallotPreview
-              heroTrack={heroTrack}
-              topTracks={topTracks}
-              savedCount={savedCount}
-              ownPosition={ownPosition}
-              onOpenRanking={onOpenRanking}
-            />
-            <LeaderboardPreview state={state} projectedWinners={projectedWinners} />
-          </div>
-        </div>
-
-        <Winners state={state} />
+        )}
       </div>
     </div>
   );
@@ -1120,6 +1149,21 @@ function TrackArtwork({ track, size }: { track: Track | null; size: "large" | "s
         </div>
       )}
     </div>
+  );
+}
+
+function TrackThumb({ track, live = false }: { track: Pick<Track, "title" | "artworkUrl"> | null; live?: boolean }) {
+  return (
+    <span className={`track-thumb ${live ? "track-thumb-live" : ""}`}>
+      {track?.artworkUrl ? <img src={track.artworkUrl} alt="" /> : <Music2 className="h-5 w-5" />}
+      {live ? (
+        <span className="track-thumb-eq" aria-hidden>
+          <i />
+          <i />
+          <i />
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -1549,10 +1593,22 @@ function ConfirmLeaveModal({ onCancel, onConfirm }: { onCancel: () => void; onCo
   );
 }
 
-function DrawerLayer({ title, eyebrow, children, onClose }: { title: string; eyebrow: string; children: ReactNode; onClose: () => void }) {
+function DrawerLayer({
+  title,
+  eyebrow,
+  children,
+  onClose,
+  side = "right",
+}: {
+  title: string;
+  eyebrow: string;
+  children: ReactNode;
+  onClose: () => void;
+  side?: "left" | "right";
+}) {
   return (
-    <div className="app-layer-backdrop app-layer-drawer-backdrop" role="dialog" aria-modal="true" aria-label={title}>
-      <aside className="app-drawer">
+    <div className={`app-layer-backdrop app-layer-drawer-backdrop ${side === "left" ? "app-layer-drawer-left" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <aside className={`app-drawer ${side === "left" ? "app-drawer-left" : ""}`}>
         <div className="drawer-body">
           <div className="layer-header drawer-visible-header">
             <div>
@@ -1731,7 +1787,7 @@ function RankingBay({
   }
 
   return (
-    <section className={`${drawer ? "drawer-section" : "room-panel"} ${compact ? "p-3" : "ballot-dock p-4"}`}>
+    <section className={`${drawer ? "drawer-section top3-drawer-surface" : "room-panel"} ${compact ? "p-3" : "ballot-dock p-4"}`}>
       <div className={`flex items-center justify-between gap-3 ${compact ? "" : "ballot-header"}`}>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Your ballot</p>
@@ -1759,12 +1815,13 @@ function RankingBay({
                 ids.splice(to, 0, draggingId);
                 void commit(ids);
               }}
-              className={`ranking-row ${compact ? "" : "ranking-row-dock"}`}
+              className={`ranking-row ${compact ? "" : "ranking-row-dock"} ${track ? "ranking-row-filled" : "ranking-row-empty"}`}
             >
-              <div className="grid h-9 w-9 place-items-center rounded-md bg-nero-live text-sm font-black text-nero-ink">{index + 1}</div>
+              <div className="ranking-rank-mark">#{index + 1}</div>
+              {track ? <TrackThumb track={track} /> : <div className="ranking-empty-art"><Plus className="h-4 w-4" /></div>}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-bold">{track?.title ?? "Open slot"}</p>
-                <p className="truncate text-xs text-nero-mist">{track?.artist ?? "Tap a listened song below"}</p>
+                <p className="truncate text-xs text-nero-mist">{track?.artist ?? "Select from listened history"}</p>
               </div>
               {track ? (
                 <div className="flex items-center gap-1">
@@ -1788,9 +1845,10 @@ function RankingBay({
             tracks.map((track) => (
               <button
                 key={track.id}
-                className="history-row"
+                className="history-row history-track-row"
                 onClick={() => commit(putTrackInTopThree(rankingIds, track.id), "Moved into your Top 3.")}
               >
+                <TrackThumb track={track} />
                 <span className="min-w-0 text-left">
                   <span className="block truncate text-sm font-semibold">{track.title}</span>
                   <span className="block truncate text-xs text-nero-mist">{track.artist}</span>
@@ -1810,12 +1868,14 @@ function RankingBay({
 function QueueRail({ state, drawer = false }: { state: PartyState; drawer?: boolean }) {
   const upcoming = state.tracks.filter((track) => track.status === "queued");
   const playedCount = state.tracks.filter((track) => track.status === "played").length;
+  const playing = state.tracks.find((track) => track.status === "playing") ?? null;
+  const played = state.tracks.filter((track) => track.status === "played").slice(-8).reverse();
   return (
-    <section className={`${drawer ? "drawer-section" : "room-panel"} flex min-h-0 flex-col p-4`}>
+    <section className={`${drawer ? "drawer-section queue-drawer-surface" : "room-panel"} flex min-h-0 flex-col p-4`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Room queue</p>
-          <h3 className="text-xl font-semibold">{upcoming.length} in Queue</h3>
+          <h3 className="text-xl font-semibold">{state.tracks.length} track{state.tracks.length === 1 ? "" : "s"} total</h3>
         </div>
         <ListMusic className="h-5 w-5 text-nero-live" aria-hidden />
       </div>
@@ -1825,27 +1885,56 @@ function QueueRail({ state, drawer = false }: { state: PartyState; drawer?: bool
         <StatPuck value={state.participants.length} label="People" />
       </div>
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="grid gap-2">
-          {state.tracks.map((track) => (
-            <div key={track.id} className={`queue-row ${track.status === "playing" ? "queue-row-live" : ""}`}>
-              <span className="grid h-8 w-8 place-items-center rounded-xl border border-white/10 text-xs font-bold text-white/60">{track.queuePosition}</span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{track.title}</p>
-                <p className="truncate text-xs text-nero-mist">{track.submittedByName} · {track.artist}</p>
-              </div>
-              <span className="rounded-full bg-white/[0.05] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/45">{track.status}</span>
+        <div className="grid gap-6">
+          {playing ? (
+            <section className="queue-drawer-section">
+              <p className="queue-drawer-heading"><span className="live-dot" />Now Playing</p>
+              <QueueDrawerRow track={playing} index="Live" live />
+            </section>
+          ) : null}
+
+          <section className="queue-drawer-section">
+            <p className="queue-drawer-heading">Up Next</p>
+            <div className="grid gap-2">
+              {upcoming.map((track, index) => (
+                <QueueDrawerRow key={track.id} track={track} index={String(index + 1)} />
+              ))}
+              {!upcoming.length ? <div className="rail-empty">No tracks queued yet.</div> : null}
             </div>
-          ))}
-          {!state.tracks.length ? <div className="rail-empty">No tracks yet.</div> : null}
+          </section>
+
+          <section className="queue-drawer-section">
+            <p className="queue-drawer-heading">Listened History</p>
+            <div className="grid gap-2">
+              {played.map((track) => (
+                <QueueDrawerRow key={track.id} track={track} index="Played" played />
+              ))}
+              {!played.length ? <div className="rail-empty">Played songs land here.</div> : null}
+            </div>
+          </section>
         </div>
       </div>
     </section>
   );
 }
 
+function QueueDrawerRow({ track, index, live = false, played = false }: { track: Track; index: string; live?: boolean; played?: boolean }) {
+  return (
+    <div className={`queue-row queue-drawer-row ${live ? "queue-row-live" : ""} ${played ? "queue-row-played" : ""}`}>
+      <span className="queue-row-index">{index}</span>
+      <TrackThumb track={track} live={live} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold">{track.title}</p>
+        <p className="truncate text-xs text-nero-mist">{track.artist} · submitted by {track.submittedByName}</p>
+      </div>
+      <span className="queue-row-duration">{formatDurationCompact(track.durationSeconds)}</span>
+    </div>
+  );
+}
+
 function ParticipantRail({ state, drawer = false }: { state: PartyState; drawer?: boolean }) {
   return (
-    <section className={`${drawer ? "drawer-section" : "room-panel"} p-4`}>
+    <section className={`${drawer ? "drawer-section participant-drawer-section" : "room-panel"} p-4`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Community</p>
@@ -1991,32 +2080,23 @@ function SubmissionPanel({
   }
 
   return (
-    <section className={`${modal ? "submit-modal-surface" : "room-panel"} flex min-h-0 flex-col p-4`}>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Submit</p>
-          <h3 className="text-xl font-semibold">Add a song</h3>
+    <section className={`${modal ? "submit-modal-surface submit-panel-stitch" : "room-panel"} flex min-h-0 flex-col p-4`}>
+      {!modal ? (
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Submit</p>
+            <h3 className="text-xl font-semibold">Add a song</h3>
+          </div>
+          <Music2 className="h-5 w-5 text-nero-live" aria-hidden />
         </div>
-        <Music2 className="h-5 w-5 text-nero-live" aria-hidden />
-      </div>
-
-      <div className="queue-status-card mt-4">
-        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-black">
-          <Ticket className="h-5 w-5" />
+      ) : (
+        <div className="submit-modal-summary">
+          <Music2 className="h-5 w-5 text-nero-live" />
+          <span>{remainingSubmissions} submission{remainingSubmissions === 1 ? "" : "s"} left</span>
+          <span>{remainingTracks} room slot{remainingTracks === 1 ? "" : "s"}</span>
+          <span>{formatDurationCompact(remainingSeconds)} left</span>
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">{ownQueued ? ownQueued.title : `${remainingSubmissions} submission${remainingSubmissions === 1 ? "" : "s"} left for you`}</p>
-          <p className="truncate text-xs text-white/50">
-            {ownPosition
-              ? `You're ${ordinal(ownPosition)} in queue.`
-              : `${remainingTracks} room slot${remainingTracks === 1 ? "" : "s"} · ${formatDurationCompact(remainingSeconds)} left.`}
-          </p>
-        </div>
-      </div>
-      <div className="condition-mini-grid">
-        <ConditionStat icon={ListMusic} label="Songs" value={`${limitStats.totalTracks}/${settings.maxQueueSize}`} percent={limitStats.songPercent} />
-        <ConditionStat icon={Clock} label="Time" value={`${formatDurationCompact(limitStats.totalSeconds)}/${settings.maxDurationMinutes}m`} percent={limitStats.timePercent} />
-      </div>
+      )}
 
       <div className="source-switch mt-4">
         <button
@@ -2026,7 +2106,7 @@ function SubmissionPanel({
           disabled={!sourceAllowed.audius}
         >
           <Search className="h-4 w-4" />
-          Audius
+          Audius Search
         </button>
         <button
           className={sourceTab === "upload" ? "source-switch-active" : ""}
@@ -2046,6 +2126,24 @@ function SubmissionPanel({
           <Disc3 className="h-4 w-4" />
           Spotify
         </button>
+      </div>
+
+      <div className="queue-status-card mt-4">
+        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-black">
+          <Ticket className="h-5 w-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold">{ownQueued ? ownQueued.title : `${remainingSubmissions} submission${remainingSubmissions === 1 ? "" : "s"} left for you`}</p>
+          <p className="truncate text-xs text-white/50">
+            {ownPosition
+              ? `You're ${ordinal(ownPosition)} in queue.`
+              : `${remainingTracks} room slot${remainingTracks === 1 ? "" : "s"} · ${formatDurationCompact(remainingSeconds)} left.`}
+          </p>
+        </div>
+      </div>
+      <div className="condition-mini-grid">
+        <ConditionStat icon={ListMusic} label="Songs" value={`${limitStats.totalTracks}/${settings.maxQueueSize}`} percent={limitStats.songPercent} />
+        <ConditionStat icon={Clock} label="Time" value={`${formatDurationCompact(limitStats.totalSeconds)}/${settings.maxDurationMinutes}m`} percent={limitStats.timePercent} />
       </div>
 
       {sourceTab === "spotify" || sourceTab === "audius" ? (
@@ -2074,16 +2172,21 @@ function SubmissionPanel({
                 return (
                   <button
                     key={track.sourceId}
-                    className="history-row"
+                    className="history-row search-result-row"
                     onClick={() => addSearchTrack(track)}
                     disabled={Boolean(blocker)}
                     title={blocker ?? `Add ${track.title}`}
                   >
+                    <TrackThumb track={track} />
                     <span className="min-w-0 text-left">
                       <span className="block truncate text-sm font-semibold">{track.title}</span>
-                      <span className="block truncate text-xs text-nero-mist">{track.artist} · {formatDurationCompact(track.durationSeconds)}</span>
+                      <span className="block truncate text-xs text-nero-mist">{track.artist}</span>
                     </span>
-                    {track.sourceType === "spotify" ? <Disc3 className="h-4 w-4 text-nero-live" /> : <Plus className="h-4 w-4 text-nero-live" />}
+                    <span className="search-result-side">
+                      <small>{formatDurationCompact(track.durationSeconds)}</small>
+                      <em>{track.sourceType}</em>
+                      {track.sourceType === "spotify" ? <Disc3 className="h-4 w-4 text-nero-live" /> : <Plus className="h-4 w-4 text-nero-live" />}
+                    </span>
                   </button>
                 );
               })}
@@ -2134,43 +2237,42 @@ function Winners({ state }: { state: PartyState }) {
   const winnerTrack = winner ? state.tracks.find((track) => track.id === winner.trackId) ?? null : null;
   const totalBallots = new Set(state.ranking.map((entry) => entry.participantId)).size;
   return (
-    <div className="finale-stage">
+    <div className="finale-stage finale-theater">
       <div className="finale-rays" aria-hidden />
-      <div className="relative z-10 grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-end">
-        <div>
-          <p className="text-sm font-black uppercase tracking-[0.24em] text-nero-live">Final reveal</p>
-          <h2 className="mt-2 text-4xl font-light leading-none sm:text-6xl">
-            {winner ? "The room picked a winner." : "Ballots are locked."}
-          </h2>
-          <p className="mt-4 max-w-xl text-base leading-7 text-white/60">
-            Final ballots use each listener's current Top 3. Scoring is 5 / 3 / 1 with tie-breaks by first-place votes, appearances, then earlier queue position.
-          </p>
-          <div className="finale-score-note justify-start">
-            <span>{totalBallots} ballot{totalBallots === 1 ? "" : "s"} counted</span>
-            <span>{state.tracks.length} tracks heard</span>
-            <span>Playlist export ready</span>
-          </div>
-        </div>
+      <div className="finale-spotlight finale-spotlight-one" aria-hidden />
+      <div className="finale-spotlight finale-spotlight-two" aria-hidden />
 
-        {winner ? (
-          <div className="finale-winner-card">
-            <span className="finale-rank finale-rank-xl">1</span>
-            <TrackArtwork track={winnerTrack} size="small" />
-            <div className="min-w-0">
-              <p className="truncate text-3xl font-light">{winner.title}</p>
-              <p className="mt-1 truncate text-sm text-white/55">{winner.artist} · submitted by {winner.submittedByName}</p>
-              <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold uppercase tracking-[0.14em] text-white/55">
-                <span className="finale-stat">{winner.score} points</span>
-                <span className="finale-stat">{winner.firstPlaceVotes} first-place</span>
-                <span className="finale-stat">{winner.appearances} appearance{winner.appearances === 1 ? "" : "s"}</span>
-              </div>
-            </div>
-          </div>
-        ) : null}
+      <div className="finale-title-block">
+        <p>Final Results</p>
+        <h2>{winner ? "Room Winner" : "Ballots Locked"}</h2>
+        <div className="finale-score-note">
+          <span>{totalBallots} ballot{totalBallots === 1 ? "" : "s"} counted</span>
+          <span>{state.tracks.length} tracks heard</span>
+          <span>5 / 3 / 1 scoring</span>
+        </div>
       </div>
 
+      {winner ? (
+        <div className="finale-winner-hero">
+          <span className="finale-rank finale-rank-xl">1</span>
+          <TrackArtwork track={winnerTrack} size="small" />
+          <div className="min-w-0">
+            <p className="finale-winner-label"><Trophy className="h-4 w-4" /> Winner</p>
+            <h3>{winner.title}</h3>
+            <p>{winner.artist} · submitted by {winner.submittedByName}</p>
+          </div>
+          <div className="finale-winner-score">
+            <strong>{winner.score}</strong>
+            <span>pts</span>
+            <small>{winner.firstPlaceVotes} first-place</small>
+          </div>
+        </div>
+      ) : (
+        <div className="source-empty-state mt-6">No Top 3 ballots were submitted before finale.</div>
+      )}
+
       {state.winners.length ? (
-        <div className="finale-podium">
+        <div className="finale-podium finale-podium-theater">
           {state.winners.slice(0, 3).map((nextWinner, index) => {
             const rankClass = index === 0 ? "finale-card-1" : index === 1 ? "finale-card-2" : "finale-card-3";
             return (
@@ -2180,15 +2282,21 @@ function Winners({ state }: { state: PartyState }) {
                 <div className="min-w-0">
                   <p className="truncate text-lg font-semibold">{nextWinner.title}</p>
                   <p className="truncate text-sm text-white/55">{nextWinner.artist}</p>
+                  <small>submitted by {nextWinner.submittedByName}</small>
                 </div>
-                <strong>{nextWinner.score}</strong>
+                <div className="finale-card-score">
+                  <strong>{nextWinner.score}</strong>
+                  <span>{nextWinner.appearances} vote{nextWinner.appearances === 1 ? "" : "s"}</span>
+                </div>
               </div>
             );
           })}
         </div>
-      ) : (
-        <div className="source-empty-state mt-6">No Top 3 ballots were submitted before finale.</div>
-      )}
+      ) : null}
+
+      <p className="finale-rules-copy">
+        Final ballots use each listener's current Top 3. Tie-breaks go by first-place votes, appearances, then earlier queue position.
+      </p>
     </div>
   );
 }
