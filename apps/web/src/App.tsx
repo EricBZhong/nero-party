@@ -57,6 +57,8 @@ type Flash = { tone: "good" | "warn" | "bad"; message: string } | null;
 type LeaveIntent = "room" | null;
 
 const route = parseRoute();
+const SILENT_AUDIO_DATA_URL =
+  "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 
 function App() {
   const [partyCode, setPartyCode] = useState(route.code);
@@ -159,14 +161,18 @@ function App() {
       audio.src = currentTrack.streamUrl;
     }
     if (Math.abs(audio.currentTime - targetPosition) > 2) {
-      audio.currentTime = Math.min(targetPosition, Math.max(currentTrack.durationSeconds - 1, 0));
+      audio.currentTime = clampPlaybackPosition(targetPosition, currentTrack.durationSeconds);
     }
     if (state.playback.isPlaying) {
-      audio.play().catch(() => setFlash({ tone: "warn", message: "Tap once in the room if browser audio is blocked." }));
+      audio.play().catch(() => {
+        setAudioUnlocked(false);
+        socket.emit("audio:ready", { participantToken, audioReady: false });
+        setFlash({ tone: "warn", message: "Browser blocked audio. Click anywhere in the room to resume playback." });
+      });
     } else {
       audio.pause();
     }
-  }, [audioUnlocked, currentTrack, state?.playback.currentTrackId, state?.playback.isPlaying, state?.playback.positionSeconds]);
+  }, [audioUnlocked, currentTrack, participantToken, state?.playback.currentTrackId, state?.playback.isPlaying, state?.playback.positionSeconds]);
 
   async function handleCreate(input: Parameters<typeof createParty>[0]) {
     setIsJoining(true);
@@ -204,21 +210,40 @@ function App() {
     }
   }
 
-  async function unlockAudio() {
-    setAudioUnlocked(true);
-    socket.emit("audio:ready", { participantToken, audioReady: true });
+  async function unlockAudio(trackToPrime?: Track | null) {
     const audio = audioRef.current;
-    if (!audio || !currentTrack?.streamUrl) return;
+    if (!audio) return false;
+    if (audioUnlocked) return true;
 
-    audio.muted = false;
-    if (!audio.src.includes(currentTrack.streamUrl)) {
-      audio.src = currentTrack.streamUrl;
+    const trackForAudio = trackToPrime ?? currentTrack;
+    let unlocked = false;
+    try {
+      audio.muted = false;
+      if (!trackForAudio?.streamUrl) {
+        await primeAudioElement(audio);
+        unlocked = true;
+      } else {
+        if (!audio.src.includes(trackForAudio.streamUrl)) {
+          audio.src = trackForAudio.streamUrl;
+        }
+        const positionSeconds = trackForAudio.id === currentTrack?.id ? (state?.playback.positionSeconds ?? 0) : 0;
+        audio.currentTime = clampPlaybackPosition(positionSeconds, trackForAudio.durationSeconds);
+        await audio.play();
+        if (!state?.playback.isPlaying || trackForAudio.id !== currentTrack?.id) {
+          audio.pause();
+        }
+        unlocked = true;
+      }
+    } catch {
+      unlocked = false;
     }
-    audio.currentTime = Math.min(state?.playback.positionSeconds ?? 0, Math.max(currentTrack.durationSeconds - 1, 0));
-    await audio.play().catch(() => undefined);
-    if (!state?.playback.isPlaying) {
-      audio.pause();
+
+    setAudioUnlocked(unlocked);
+    socket.emit("audio:ready", { participantToken, audioReady: unlocked });
+    if (!unlocked) {
+      setFlash({ tone: "warn", message: "Audio is still blocked. Click once in the room, then start playback again." });
     }
+    return unlocked;
   }
 
   function leaveRoom() {
@@ -292,7 +317,7 @@ function AuthenticatedSurface({
   participantToken: string;
   currentTrack: Track | null;
   isHost: boolean;
-  onUnlockAudio: () => Promise<void>;
+  onUnlockAudio: (trackToPrime?: Track | null) => Promise<boolean>;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
   onExpand: () => void;
@@ -655,7 +680,7 @@ function FocusRoom({
   participantToken: string;
   currentTrack: Track | null;
   isHost: boolean;
-  onUnlockAudio: () => Promise<void>;
+  onUnlockAudio: (trackToPrime?: Track | null) => Promise<boolean>;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
   onLeave: () => void;
@@ -740,7 +765,7 @@ function NowPlayingStage({
   participantToken: string;
   currentTrack: Track | null;
   isHost: boolean;
-  onUnlockAudio: () => Promise<void>;
+  onUnlockAudio: (trackToPrime?: Track | null) => Promise<boolean>;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
   onLeave: () => void;
@@ -1244,10 +1269,12 @@ function HostControls({
   participantToken: string;
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
-  onPrimeAudio: () => Promise<void>;
+  onPrimeAudio: (trackToPrime?: Track | null) => Promise<boolean>;
 }) {
   const [busyAction, setBusyAction] = useState<"start" | "advance" | "finale" | null>(null);
-  const queuedCount = state.tracks.filter((track) => track.status === "queued").length;
+  const queuedTracks = state.tracks.filter((track) => track.status === "queued");
+  const queuedCount = queuedTracks.length;
+  const nextQueuedTrack = queuedTracks[0] ?? null;
   const hasCurrentTrack = Boolean(state.playback.currentTrackId);
   const canStart = queuedCount > 0 && !hasCurrentTrack && state.party.status !== "finalized";
   const canAdvance = state.party.status !== "finalized" && (hasCurrentTrack || queuedCount > 0);
@@ -1257,7 +1284,14 @@ function HostControls({
     if (busyAction) return;
     setBusyAction(action);
     try {
-      void onPrimeAudio();
+      if (action !== "finale" && nextQueuedTrack?.sourceType !== "spotify") {
+        if (!nextQueuedTrack?.streamUrl) {
+          onFlash({ tone: "bad", message: "This track does not have a playable browser audio URL. Add another source." });
+          return;
+        }
+        const audioReady = await onPrimeAudio(nextQueuedTrack);
+        if (!audioReady) return;
+      }
       const result = await run();
       onStateChange(result.state);
       onFlash({ tone: "good", message });
@@ -2147,6 +2181,37 @@ function clampInt(value: number, min: number, max: number) {
 function clampPercent(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function clampPlaybackPosition(positionSeconds: number, durationSeconds: number) {
+  const maxPosition = Math.max(0, durationSeconds - 0.25);
+  return Math.max(0, Math.min(positionSeconds, maxPosition));
+}
+
+async function primeAudioElement(audio: HTMLAudioElement) {
+  const previousSrc = audio.getAttribute("src");
+  const previousVolume = audio.volume;
+  const previousMuted = audio.muted;
+
+  audio.pause();
+  audio.src = SILENT_AUDIO_DATA_URL;
+  audio.volume = 0;
+  audio.muted = false;
+
+  try {
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
+  } finally {
+    audio.volume = previousVolume;
+    audio.muted = previousMuted;
+    if (previousSrc) {
+      audio.src = previousSrc;
+    } else {
+      audio.removeAttribute("src");
+      audio.load();
+    }
+  }
 }
 
 function formatTime(seconds: number) {

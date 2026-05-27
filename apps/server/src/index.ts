@@ -696,7 +696,11 @@ async function startSpotifyTrackForParty(
 
   if (!connections.length) {
     await logEvent(partyId, "spotify.playback_skipped", { trackId: track.id, uri, reason: "no_connected_listeners" });
-    return { startedCount: 0, failureCount: 1, failures: ["No linked Spotify listeners."] };
+    return {
+      startedCount: 0,
+      failureCount: 1,
+      failures: ["Connect Spotify from at least one listener, open Spotify on that device, then start again."],
+    };
   }
 
   const failures: string[] = [];
@@ -750,7 +754,9 @@ async function startNextTrack(partyId: string) {
     return;
   }
 
-  await startSpotifyTrackForParty(partyId, nextTrack);
+  assertTrackHasPlayableSource(nextTrack);
+  const spotifyPlayback = await startSpotifyTrackForParty(partyId, nextTrack);
+  assertSpotifyPlaybackStarted(nextTrack, spotifyPlayback);
   await prisma.$transaction([
     prisma.party.update({ where: { id: partyId }, data: { status: "live" } }),
     prisma.track.update({ where: { id: nextTrack.id }, data: { status: "playing" } }),
@@ -764,7 +770,9 @@ async function startNextTrack(partyId: string) {
 
 async function advanceTrack(partyId: string) {
   const nextTrack = await prisma.track.findFirst({ where: { partyId, status: "queued" }, orderBy: { queuePosition: "asc" } });
-  await startSpotifyTrackForParty(partyId, nextTrack);
+  assertTrackHasPlayableSource(nextTrack);
+  const spotifyPlayback = await startSpotifyTrackForParty(partyId, nextTrack);
+  assertSpotifyPlaybackStarted(nextTrack, spotifyPlayback);
   const playback = await prisma.playbackState.findUnique({ where: { partyId } });
 
   if (!nextTrack) {
@@ -791,6 +799,25 @@ async function advanceTrack(partyId: string) {
     }),
   ]);
   await logEvent(partyId, "playback.advanced", { trackId: nextTrack.id });
+}
+
+function assertTrackHasPlayableSource(track: { sourceType: string; streamUrl: string | null } | null) {
+  if (!track || track.sourceType === "spotify" || track.streamUrl) return;
+  throw new Error("This track does not have a playable browser audio URL. Add another source.");
+}
+
+function assertSpotifyPlaybackStarted(
+  track: { sourceType: string } | null,
+  playback: { startedCount: number; failureCount: number; failures: string[] },
+) {
+  if (!track || track.sourceType !== "spotify" || playback.startedCount > 0) return;
+
+  const message =
+    playback.failures.find(Boolean) ??
+    (playback.failureCount > 0
+      ? "Spotify playback failed for every linked listener."
+      : "Connect Spotify from at least one listener, open Spotify on that device, then start again.");
+  throw new Error(message);
 }
 
 async function finalizeParty(partyId: string) {
