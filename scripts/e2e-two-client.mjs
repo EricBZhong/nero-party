@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
 const BASE_URL = process.env.E2E_BASE_URL ?? "http://localhost:5173";
-const API_URL = process.env.E2E_API_URL ?? "http://localhost:3001";
+const API_URL = process.env.E2E_API_URL ?? "http://localhost:3000";
 const CDP_PORT = Number(process.env.E2E_CDP_PORT ?? 9223);
 const CHROME_PROFILE = process.env.E2E_CHROME_PROFILE ?? "/private/tmp/nero-party-e2e-chrome";
 const DEFAULT_TIMEOUT_MS = 15_000;

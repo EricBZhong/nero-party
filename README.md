@@ -13,10 +13,17 @@ Hard source policy: production full songs come from user uploads, Audius streams
 
 ## Local Setup
 
+Prerequisites:
+
+- Node.js 22+ and npm.
+- Google Chrome for the two-client browser E2E test.
+- Spotify Premium + a Spotify Developer app only if you want to demo Spotify playback. Upload playback does not need Spotify.
+
 ```bash
 npm install
 cp .env.example .env
-# Edit DATABASE_URL to an absolute local SQLite path.
+# Edit DATABASE_URL to an absolute local SQLite path, for example:
+# DATABASE_URL=file:/Users/you/nero-party/apps/server/prisma/dev.db
 npm run prisma:generate
 npm run prisma:push
 npm run dev
@@ -27,6 +34,27 @@ Local URLs:
 - Web: `http://localhost:5173`
 - Server: `http://localhost:3000`
 - Overlay preview: open from the room's `Overlay` button.
+
+If port `3000` is already taken, change `PORT`, `PUBLIC_API_URL`, `VITE_PUBLIC_API_URL`, `SPOTIFY_REDIRECT_URI`, and `NERO_API_URL` together in `.env`, then restart the dev server. The E2E test also needs `E2E_API_URL` when the API is not on `3000`.
+
+Useful local demo path:
+
+1. Run `npm run dev`.
+2. Open `http://localhost:5173`.
+3. Create a room, add an upload/Audius/Spotify track, and press Play.
+4. Open the same room link in another browser profile or incognito window to verify guest join, save, rating, sync playback, skip, End Game, and playlist export.
+
+## Current Demo Functionality
+
+- Create and join live music rooms by room link/code.
+- Realtime multiplayer sync across host and listener clients using Socket.IO.
+- Add songs from uploads, Audius search, or Spotify search when configured.
+- Browser playback for uploaded audio, plus optional Spotify playback through each listener's own connected Spotify account/device.
+- Host playback controls: play/pause, skip to next track, and End Game.
+- Synced now-playing state with queue, artwork, progress, elapsed time, and transition state between songs.
+- Listener actions: save songs, rate each heard song from `0.0` to `5.0` in `0.1` increments, and export saved songs after the game.
+- Results page with winner selection, average ratings, default neutral `3.0` scores for missing ratings, and a scrollable all-ratings section.
+- Companion overlay preview for the multitasking use case; native desktop overlay distribution remains a follow-up.
 
 ## Environment
 
@@ -128,14 +156,42 @@ Non-goal: Nero should not inject into games, hook graphics APIs, scrape protecte
 ## Development Commands
 
 ```bash
-npm run dev              # server + web
-npm run dev:web
-npm run dev:server
-npm run dev:desktop
+npm run dev                  # server + web
+npm run dev:web              # Vite web app only
+npm run dev:server           # Express/Socket.IO API only
+npm run dev:desktop          # Electron overlay shell
+npm run dev:discord          # Discord bot shell
+npm run prisma:generate      # generate Prisma client
+npm run prisma:push          # sync local SQLite schema
+npm run typecheck            # TypeScript across all workspaces
+npm test                     # unit/smoke tests
+npm run build                # production build across all workspaces
+npm run test:e2e:two-client  # host + guest browser E2E; requires app running
+```
+
+Recommended pre-submit check:
+
+```bash
+npm run prisma:push
 npm run typecheck
-npm run test
+npm test
 npm run build
 ```
+
+Two-client E2E check:
+
+```bash
+# Terminal 1
+npm run dev
+
+# Terminal 2, using the default .env.example API port
+npm run test:e2e:two-client
+
+# If your API is on another port, for example 3001:
+E2E_API_URL=http://localhost:3001 npm run test:e2e:two-client
+```
+
+The E2E script launches or reuses a temporary Chrome profile with DevTools on port `9223`, creates a fresh room, opens isolated host and guest contexts, uploads generated WAV tones, verifies synced browser audio playback, saves and rates as the guest, skips tracks as the host, ends the game, checks default `3.0` scoring, and verifies post-finale playlist export. Use `npm run test:e2e:two-client -- --keep-open` to leave the test tabs open for debugging.
 
 Desktop installers:
 
