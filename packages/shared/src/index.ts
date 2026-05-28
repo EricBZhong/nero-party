@@ -6,6 +6,7 @@ export const trackStatuses = ["queued", "playing", "played", "skipped"] as const
 export const trackSourceTypes = ["audius", "spotify", "upload", "youtube_embed"] as const;
 export const participantRoles = ["host", "guest"] as const;
 export const reactionTypes = ["lift", "pass", "rewind"] as const;
+export const DEFAULT_UNRATED_SCORE = 3;
 
 export type PartyStatus = (typeof partyStatuses)[number];
 export type PartyMode = (typeof partyModes)[number];
@@ -90,17 +91,17 @@ export interface SavedTrack {
 export interface RankingEntry {
   participantId: string;
   trackId: string;
-  rank: number;
+  rating: number;
 }
 
-export interface BallotRank {
+export interface BallotRating {
   trackId: string;
-  rank: number;
+  rating: number;
 }
 
 export interface Ballot {
   participantId: string;
-  ranks: BallotRank[];
+  ratings: BallotRating[];
   submittedAt: string;
 }
 
@@ -110,6 +111,11 @@ export interface WinnerResult {
   artist: string;
   submittedByName: string;
   score: number;
+  averageRating: number;
+  ratingCount: number;
+  explicitRatingCount: number;
+  defaultRatingCount: number;
+  totalRating: number;
   firstPlaceVotes: number;
   appearances: number;
   queuePosition: number;
@@ -182,9 +188,10 @@ export const addTrackSchema = z.object({
   durationSeconds: z.number().int().min(1).max(7200),
 });
 
-export const updateRankingSchema = z.object({
+export const rateTrackSchema = z.object({
   participantToken: z.string().min(8),
-  trackIds: z.array(z.string().min(1)).max(3),
+  trackId: z.string().min(1),
+  rating: z.number().min(0).max(5),
 });
 
 export const saveTrackSchema = z.object({
@@ -215,60 +222,115 @@ export function defaultPartySettings(): PartySettings {
   };
 }
 
-export function normalizeRanking(trackIds: string[]): BallotRank[] {
-  return [...new Set(trackIds)].slice(0, 3).map((trackId, index) => ({
-    trackId,
-    rank: index + 1,
-  }));
+export function normalizeRating(rating: number): number {
+  if (!Number.isFinite(rating)) return 0;
+  return Math.round(Math.min(5, Math.max(0, rating)) * 10) / 10;
 }
 
-export function putTrackInTopThree(currentTop: string[], trackId: string): string[] {
-  return [trackId, ...currentTop.filter((id) => id !== trackId)].slice(0, 3);
+export function roundRatingTotal(ratingTotal: number): number {
+  if (!Number.isFinite(ratingTotal)) return 0;
+  return Math.round(Math.max(0, ratingTotal) * 10) / 10;
 }
 
-export function scoreBallots(tracks: Track[], ballots: Ballot[]): WinnerResult[] {
+export function ratingToTenths(rating: number): number {
+  return Math.round(normalizeRating(rating) * 10);
+}
+
+export function tenthsToRating(ratingTenth: number): number {
+  return normalizeRating(ratingTenth / 10);
+}
+
+export function scoreRatings(
+  tracks: Track[],
+  ballots: Ballot[],
+  options: { eligibleVoterCount?: number; defaultRating?: number } = {},
+): WinnerResult[] {
   const trackById = new Map(tracks.map((track) => [track.id, track]));
-  const scores = new Map<string, WinnerResult>();
-  const pointsByRank = new Map([
-    [1, 5],
-    [2, 3],
-    [3, 1],
-  ]);
+  const scores = new Map<string, WinnerResult & { rawTotal: number }>();
+  const defaultRating = normalizeRating(options.defaultRating ?? DEFAULT_UNRATED_SCORE);
+  const eligibleVoterCount = Math.max(options.eligibleVoterCount ?? new Set(ballots.map((ballot) => ballot.participantId)).size, 0);
 
   for (const ballot of ballots) {
     const seen = new Set<string>();
-    for (const rank of ballot.ranks) {
-      if (seen.has(rank.trackId)) continue;
-      const track = trackById.get(rank.trackId);
-      const points = pointsByRank.get(rank.rank) ?? 0;
-      if (!track || points === 0) continue;
-      seen.add(rank.trackId);
+    for (const ratingEntry of ballot.ratings) {
+      if (seen.has(ratingEntry.trackId)) continue;
+      const track = trackById.get(ratingEntry.trackId);
+      if (!track) continue;
+      const rating = normalizeRating(ratingEntry.rating);
+      seen.add(ratingEntry.trackId);
       const existing =
-        scores.get(rank.trackId) ??
+        scores.get(ratingEntry.trackId) ??
         {
           trackId: track.id,
           title: track.title,
           artist: track.artist,
           submittedByName: track.submittedByName,
           score: 0,
+          averageRating: 0,
+          ratingCount: 0,
+          explicitRatingCount: 0,
+          defaultRatingCount: 0,
+          totalRating: 0,
           firstPlaceVotes: 0,
           appearances: 0,
           queuePosition: track.queuePosition,
+          rawTotal: 0,
         };
-      existing.score += points;
+      existing.rawTotal += rating;
+      existing.totalRating = roundRatingTotal(existing.rawTotal);
       existing.appearances += 1;
-      if (rank.rank === 1) existing.firstPlaceVotes += 1;
-      scores.set(rank.trackId, existing);
+      existing.ratingCount += 1;
+      existing.explicitRatingCount += 1;
+      existing.averageRating = normalizeRating(existing.rawTotal / existing.ratingCount);
+      existing.score = existing.averageRating;
+      if (rating === 5) existing.firstPlaceVotes += 1;
+      scores.set(ratingEntry.trackId, existing);
     }
   }
 
-  return [...scores.values()].sort((a, b) => {
+  for (const track of tracks) {
+    const existing =
+      scores.get(track.id) ??
+      {
+        trackId: track.id,
+        title: track.title,
+        artist: track.artist,
+        submittedByName: track.submittedByName,
+        score: 0,
+        averageRating: 0,
+        ratingCount: 0,
+        explicitRatingCount: 0,
+        defaultRatingCount: 0,
+        totalRating: 0,
+        firstPlaceVotes: 0,
+        appearances: 0,
+        queuePosition: track.queuePosition,
+        rawTotal: 0,
+      };
+    const missingRatingCount = Math.max(0, eligibleVoterCount - existing.explicitRatingCount);
+    if (missingRatingCount > 0) {
+      existing.rawTotal += missingRatingCount * defaultRating;
+      existing.defaultRatingCount = missingRatingCount;
+      existing.ratingCount += missingRatingCount;
+      existing.appearances = existing.explicitRatingCount;
+      existing.totalRating = roundRatingTotal(existing.rawTotal);
+      existing.averageRating = normalizeRating(existing.rawTotal / existing.ratingCount);
+      existing.score = existing.averageRating;
+      scores.set(track.id, existing);
+    } else if (existing.explicitRatingCount > 0) {
+      scores.set(track.id, existing);
+    }
+  }
+
+  return [...scores.values()].map(({ rawTotal: _rawTotal, ...result }) => result).sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
+    if (b.explicitRatingCount !== a.explicitRatingCount) return b.explicitRatingCount - a.explicitRatingCount;
     if (b.firstPlaceVotes !== a.firstPlaceVotes) return b.firstPlaceVotes - a.firstPlaceVotes;
-    if (b.appearances !== a.appearances) return b.appearances - a.appearances;
     return a.queuePosition - b.queuePosition;
   });
 }
+
+export const scoreBallots = scoreRatings;
 
 export function assertNever(value: never): never {
   throw new Error(`Unhandled value: ${String(value)}`);

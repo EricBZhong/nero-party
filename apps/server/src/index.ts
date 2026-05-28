@@ -16,13 +16,13 @@ import {
   createPartySchema,
   defaultPartySettings,
   joinPartySchema,
-  normalizeRanking,
   playbackCommandSchema,
-  putTrackInTopThree,
+  rateTrackSchema,
+  ratingToTenths,
   reactionSchema,
   saveTrackSchema,
-  scoreBallots,
-  updateRankingSchema,
+  scoreRatings,
+  tenthsToRating,
   type Ballot,
   type Participant,
   type PartySettings,
@@ -456,15 +456,20 @@ app.post(
 );
 
 app.put(
-  "/api/participants/:participantId/ranking",
+  "/api/participants/:participantId/rating",
   asyncHandler(async (req, res) => {
-    const body = updateRankingSchema.parse(req.body);
+    const body = rateTrackSchema.parse(req.body);
     const participant = await prisma.participant.findUniqueOrThrow({ where: { id: req.params.participantId } });
     if (participant.token !== body.participantToken) {
       res.status(403).json({ message: "Participant token does not match." });
       return;
     }
-    await replaceRanking(participant.id, body.trackIds);
+    const track = await prisma.track.findFirst({ where: { id: body.trackId, partyId: participant.partyId } });
+    if (!track) {
+      res.status(404).json({ message: "Track not found in this party." });
+      return;
+    }
+    await setRating(participant.id, body.trackId, body.rating);
     await emitPartyEvent(participant.partyId, "ranking:updated", { participantId: participant.id });
     await emitPartyState(participant.partyId);
     res.json({ state: await getPartyState(participant.partyId) });
@@ -630,7 +635,7 @@ async function getPartyState(codeOrId: string): Promise<PartyState> {
     prisma.participant.findMany({ where: { partyId: party.id }, orderBy: { joinedAt: "asc" } }),
     prisma.track.findMany({ where: { partyId: party.id }, include: { submittedBy: true }, orderBy: { queuePosition: "asc" } }),
     prisma.savedTrack.findMany({ where: { participant: { partyId: party.id } } }),
-    prisma.rankingEntry.findMany({ where: { participant: { partyId: party.id } }, orderBy: { rank: "asc" } }),
+    prisma.rankingEntry.findMany({ where: { participant: { partyId: party.id } }, orderBy: { ratingTenth: "desc" } }),
     prisma.reaction.findMany({ where: { partyId: party.id }, orderBy: { createdAt: "desc" }, take: 25 }),
     prisma.ballot.findMany({ where: { partyId: party.id }, include: { ranks: true } }),
   ]);
@@ -655,7 +660,7 @@ async function getPartyState(codeOrId: string): Promise<PartyState> {
   const sharedBallots: Ballot[] = ballots.map((ballot) => ({
     participantId: ballot.participantId,
     submittedAt: ballot.submittedAt.toISOString(),
-    ranks: ballot.ranks.map((rank) => ({ trackId: rank.trackId, rank: rank.rank })),
+    ratings: ballot.ranks.map((rank) => ({ trackId: rank.trackId, rating: tenthsToRating(rank.rank) })),
   }));
 
   const serverNow = new Date();
@@ -688,7 +693,7 @@ async function getPartyState(codeOrId: string): Promise<PartyState> {
       trackId: saved.trackId,
       createdAt: saved.createdAt.toISOString(),
     })),
-    ranking: ranking.map((entry) => ({ participantId: entry.participantId, trackId: entry.trackId, rank: entry.rank })),
+    ranking: ranking.map((entry) => ({ participantId: entry.participantId, trackId: entry.trackId, rating: tenthsToRating(entry.ratingTenth) })),
     reactions: reactions.map((reaction) => ({
       id: reaction.id,
       partyId: reaction.partyId,
@@ -697,7 +702,14 @@ async function getPartyState(codeOrId: string): Promise<PartyState> {
       type: reaction.type as Reaction["type"],
       createdAt: reaction.createdAt.toISOString(),
     })),
-    winners: party.status === "finalized" ? scoreBallots(sharedTracks, sharedBallots) : [],
+    winners:
+      party.status === "finalized"
+        ? scoreRatings(
+            sharedTracks.filter((track) => track.status === "played" || track.status === "playing"),
+            sharedBallots,
+            { eligibleVoterCount: participants.length },
+          )
+        : [],
   };
 }
 
@@ -736,18 +748,12 @@ async function requireHost(partyId: string, token: string) {
   return participant;
 }
 
-async function replaceRanking(participantId: string, trackIds: string[]) {
-  const ranks = normalizeRanking(trackIds);
-  await prisma.$transaction([
-    prisma.rankingEntry.deleteMany({ where: { participantId } }),
-    ...(ranks.length
-      ? [
-          prisma.rankingEntry.createMany({
-            data: ranks.map((rank) => ({ participantId, trackId: rank.trackId, rank: rank.rank })),
-          }),
-        ]
-      : []),
-  ]);
+async function setRating(participantId: string, trackId: string, rating: number) {
+  await prisma.rankingEntry.upsert({
+    where: { participantId_trackId: { participantId, trackId } },
+    create: { participantId, trackId, ratingTenth: ratingToTenths(rating) },
+    update: { ratingTenth: ratingToTenths(rating) },
+  });
 }
 
 async function getSpotifyConnectionForParticipant(partyId: string, participantId: string, allowHostFallback: boolean) {
@@ -1013,19 +1019,24 @@ function hasSpotifyScope(scope: string | null, requiredScope: string) {
 }
 
 async function finalizeParty(partyId: string) {
+  const playback = await prisma.playbackState.findUnique({ where: { partyId } });
+  await pauseCurrentTrack(partyId);
+  if (playback?.currentTrackId) {
+    await prisma.track.update({ where: { id: playback.currentTrackId }, data: { status: "played" } }).catch(() => null);
+  }
   const participants = await prisma.participant.findMany({ where: { partyId } });
-  const rankings = await prisma.rankingEntry.findMany({ where: { participant: { partyId } }, orderBy: { rank: "asc" } });
+  const ratings = await prisma.rankingEntry.findMany({ where: { participant: { partyId } }, orderBy: { ratingTenth: "desc" } });
   await prisma.$transaction([prisma.ballot.deleteMany({ where: { partyId } })]);
 
   for (const participant of participants) {
-    const participantRanks = rankings.filter((rank) => rank.participantId === participant.id).slice(0, 3);
-    if (participantRanks.length === 0) continue;
+    const participantRatings = ratings.filter((rating) => rating.participantId === participant.id);
+    if (participantRatings.length === 0) continue;
     await prisma.ballot.create({
       data: {
         partyId,
         participantId: participant.id,
         ranks: {
-          create: participantRanks.map((rank) => ({ trackId: rank.trackId, rank: rank.rank })),
+          create: participantRatings.map((rating) => ({ trackId: rating.trackId, rank: rating.ratingTenth })),
         },
       },
     });
@@ -1103,5 +1114,3 @@ function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => P
     fn(req, res, next).catch(next);
   };
 }
-
-export { putTrackInTopThree };

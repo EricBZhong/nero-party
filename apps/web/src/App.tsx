@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   AudioLines,
   ChevronRight,
   Clock,
@@ -10,7 +8,6 @@ import {
   Disc3,
   Download,
   DoorOpen,
-  GripVertical,
   Heart,
   ListMusic,
   Loader2,
@@ -34,7 +31,7 @@ import {
   X,
 } from "lucide-react";
 import type { Ballot, Participant, PartyMode, PartySettings, PartyState, Track } from "@nero/shared";
-import { putTrackInTopThree, scoreBallots } from "@nero/shared";
+import { DEFAULT_UNRATED_SCORE, normalizeRating, scoreRatings } from "@nero/shared";
 import {
   addTrack,
   advancePlayback,
@@ -45,13 +42,13 @@ import {
   getParty,
   joinParty,
   pausePlayback,
+  rateTrack,
   saveTrack,
   searchAudius,
   searchSpotify,
   setSpotifyDevice,
   startPlayback,
   spotifyLoginUrl,
-  updateRanking,
   uploadAudio,
   type SearchTrack,
   type SpotifyStatus,
@@ -67,6 +64,7 @@ type SpotifyWebPlaybackState = "idle" | "starting" | "ready" | "unavailable";
 interface SpotifyWebPlayer {
   connect(): Promise<boolean>;
   disconnect(): void;
+  pause?(): Promise<void>;
   addListener(event: "ready", callback: (payload: { device_id: string }) => void): boolean;
   addListener(event: "not_ready", callback: (payload: { device_id: string }) => void): boolean;
   addListener(event: "initialization_error" | "authentication_error" | "account_error" | "playback_error", callback: (payload: { message: string }) => void): boolean;
@@ -89,6 +87,7 @@ const route = parseRoute();
 const SILENT_AUDIO_DATA_URL =
   "data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
 let spotifySdkPromise: Promise<void> | null = null;
+let activeSpotifyPlayer: SpotifyWebPlayer | null = null;
 
 function App() {
   const [partyCode, setPartyCode] = useState(route.code);
@@ -186,8 +185,12 @@ function App() {
   }, [participantToken, audioUnlocked, currentTrack?.id, currentTrack?.streamUrl, state?.playback.isPlaying]);
 
   useEffect(() => {
-    if (!audioRef.current || !state || !currentTrack?.streamUrl || !audioUnlocked) return;
+    if (!audioRef.current) return;
     const audio = audioRef.current;
+    if (!state?.playback.isPlaying || !currentTrack?.streamUrl || !audioUnlocked) {
+      audio.pause();
+      return;
+    }
     const targetPosition = state.playback.positionSeconds;
     if (!audio.src || !audio.src.includes(currentTrack.streamUrl)) {
       audio.src = currentTrack.streamUrl;
@@ -211,6 +214,18 @@ function App() {
       audio.pause();
     }
   }, [audioUnlocked, currentTrack, participantToken, state?.playback.currentTrackId, state?.playback.isPlaying, state?.playback.positionSeconds]);
+
+  useEffect(() => {
+    const stopPlayback = () => {
+      stopBrowserPlayback(audioRef.current);
+    };
+    window.addEventListener("pagehide", stopPlayback);
+    window.addEventListener("beforeunload", stopPlayback);
+    return () => {
+      window.removeEventListener("pagehide", stopPlayback);
+      window.removeEventListener("beforeunload", stopPlayback);
+    };
+  }, []);
 
   async function handleCreate(input: Parameters<typeof createParty>[0]) {
     setIsJoining(true);
@@ -293,6 +308,8 @@ function App() {
   }
 
   function leaveRoom() {
+    stopBrowserPlayback(audioRef.current);
+    setAudioUnlocked(false);
     if (partyCode) localStorage.removeItem(tokenKey(partyCode));
     setParticipantToken("");
     setState(null);
@@ -499,7 +516,7 @@ function Entry({
           <div className="entry-copy-block">
             <p className="entry-kicker">{routeCode ? "Invite detected" : "Live listening room"}</p>
             <h1 className="entry-headline">Nero afterhours starts here.</h1>
-            <p className="entry-subcopy">Add songs, rank your Top 3, reveal the track everyone remembers.</p>
+            <p className="entry-subcopy">Add songs, rate each track out of 5, reveal the room favorite.</p>
           </div>
 
           <div className="entry-tab-switch" role="tablist" aria-label="Room action">
@@ -690,23 +707,23 @@ function SetupPreview({ title, mode, tab, settings }: { title: string; mode: Par
 
           <div className="preview-top-list">
             <div className="preview-top-heading">
-              <span>Current Top 3</span>
+            <span>Live ratings</span>
               <span>Queue: {settings.maxQueueSize}</span>
             </div>
             <div className="preview-top-row preview-top-row-active">
               <span>1</span>
               <strong>Genesis</strong>
-              <em>24 pts</em>
+              <em>4.7 avg</em>
             </div>
             <div className="preview-top-row">
               <span>2</span>
               <strong>Nightcall</strong>
-              <em>18 pts</em>
+              <em>4.4 avg</em>
             </div>
             <div className="preview-top-row">
               <span>3</span>
               <strong>{mode === "focus" ? "Gosh" : "Overlay ready"}</strong>
-              <em>{settings.maxSubmissionsPerParticipant} picks</em>
+              <em>{DEFAULT_UNRATED_SCORE.toFixed(1)} default</em>
             </div>
           </div>
         </div>
@@ -769,8 +786,8 @@ function FocusRoom({
       ) : null}
 
       {layer === "ranking" ? (
-        <DrawerLayer title="Modify Top 3" eyebrow="Private ranking" onClose={() => setLayer(null)}>
-          <RankingBay state={state} participant={participant} participantToken={participantToken} tracks={listenedTracks} onFlash={onFlash} drawer />
+        <DrawerLayer title="Rate Songs" eyebrow="Private ratings" onClose={() => setLayer(null)}>
+          <RankingBay state={state} participant={participant} participantToken={participantToken} tracks={listenedTracks} onFlash={onFlash} onStateChange={onStateChange} drawer />
         </DrawerLayer>
       ) : null}
 
@@ -854,16 +871,16 @@ function NowPlayingStage({
   const ownPosition = ownQueued ? Math.max(1, state.tracks.filter((track) => track.status === "queued" && track.queuePosition <= ownQueued.queuePosition).length) : null;
   const stageLabel = isFinalized ? "Final reveal" : currentTrack ? "Now playing" : isPreview ? "Up next" : "Lobby";
   const stageNote = isFinalized
-    ? "Ballots are locked. The room winner is live."
+    ? "Ratings are locked. The room winner is live."
     : currentTrack?.sourceType === "spotify"
-      ? "Spotify is starting on each linked listener's active Spotify device."
+      ? "Spotify is starting in each linked listener's browser player."
       : currentTrack
       ? `Queued by ${currentTrack.submittedByName}`
       : queuedPreview
         ? `${waitingCount} waiting. Host can press play when ready.`
         : "Add an Audius track, Spotify track, or approved upload to light up the room.";
-  const participantRanking = getParticipantRanking(state, participant.id);
-  const topTracks = participantRanking.map((trackId) => state.tracks.find((track) => track.id === trackId)).filter(Boolean) as Track[];
+  const participantRatings = getParticipantRatings(state, participant.id);
+  const ratedTracks = getParticipantRatedTracks(state, participant.id).slice(0, 3);
   const projectedWinners = getProjectedWinners(state);
   const stageTransitionKey = heroTrack?.id ?? stageLabel;
   const listenerCount = state.participants.length;
@@ -975,7 +992,8 @@ function NowPlayingStage({
           <aside className="focus-right-rail">
             <BallotPreview
               heroTrack={heroTrack}
-              topTracks={topTracks}
+              ratedTracks={ratedTracks}
+              ratingCount={participantRatings.length}
               savedCount={savedCount}
               ownPosition={ownPosition}
               onOpenRanking={onOpenRanking}
@@ -987,7 +1005,7 @@ function NowPlayingStage({
 
       <footer className="stage-brand-footer">
         <strong>NERO PARTY</strong>
-        <span>{isFinalized ? "Final ballots locked" : stageNote}</span>
+        <span>{isFinalized ? "Final ratings locked" : stageNote}</span>
         <span>{state.party.code}</span>
       </footer>
       </div>
@@ -1213,9 +1231,7 @@ function QuickActions({
   onFlash: (flash: Flash) => void;
   onStateChange: (state: PartyState) => void;
 }) {
-  const participantRanking = getParticipantRanking(state, participant.id);
   const saved = state.savedTracks.some((savedTrack) => savedTrack.participantId === participant.id && savedTrack.trackId === track.id);
-  const isTopPick = participantRanking[0] === track.id;
 
   return (
     <>
@@ -1233,21 +1249,81 @@ function QuickActions({
         <Heart className={`h-4 w-4 ${saved ? "fill-nero-live text-nero-live" : ""}`} />
         Save
       </button>
-      <button
-        className={`primary-button ${isTopPick ? "action-confirmed" : ""}`}
-        onClick={() =>
-          updateRanking(participant.id, participantToken, putTrackInTopThree(participantRanking, track.id))
-            .then((result) => {
-              onStateChange(result.state);
-              onFlash({ tone: "good", message: "Moved into your Top 3." });
-            })
-            .catch((error) => onFlash({ tone: "bad", message: getErrorMessage(error) }))
-        }
-      >
-        <Trophy className="h-4 w-4" />
-        Put in Top 3
-      </button>
+      <RatingSlider state={state} participant={participant} participantToken={participantToken} track={track} onFlash={onFlash} onStateChange={onStateChange} />
     </>
+  );
+}
+
+function RatingSlider({
+  state,
+  participant,
+  participantToken,
+  track,
+  onFlash,
+  onStateChange,
+  compact = false,
+}: {
+  state: PartyState;
+  participant: Participant;
+  participantToken: string;
+  track: Track;
+  onFlash: (flash: Flash) => void;
+  onStateChange: (state: PartyState) => void;
+  compact?: boolean;
+}) {
+  const existingRating = getTrackRating(state, participant.id, track.id);
+  const [value, setValue] = useState(existingRating ?? DEFAULT_UNRATED_SCORE);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (dirty) return;
+    setValue(existingRating ?? DEFAULT_UNRATED_SCORE);
+  }, [dirty, existingRating, track.id]);
+
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const nextRating = normalizeRating(value);
+    const timer = window.setTimeout(() => {
+      setSaving(true);
+      rateTrack(participant.id, participantToken, track.id, nextRating)
+        .then((result) => {
+          onStateChange(result.state);
+          setDirty(false);
+        })
+        .catch((error) => onFlash({ tone: "bad", message: getErrorMessage(error) }))
+        .finally(() => setSaving(false));
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [dirty, onFlash, onStateChange, participant.id, participantToken, track.id, value]);
+
+  const display = existingRating === null && !dirty ? "--" : normalizeRating(value).toFixed(1);
+
+  return (
+    <div className={`rating-control ${compact ? "rating-control-compact" : ""}`}>
+      <div className="rating-control-top">
+        <span>{existingRating === null && !dirty ? "Rate this song" : "Your rating"}</span>
+        <strong>{display}</strong>
+      </div>
+      <input
+        className="rating-slider"
+        type="range"
+        min={0}
+        max={5}
+        step={0.1}
+        value={value}
+        aria-label={`Rate ${track.title} from 0 to 5`}
+        onChange={(event) => {
+          setValue(Number(event.currentTarget.value));
+          setDirty(true);
+        }}
+      />
+      <div className="rating-control-bottom">
+        <span>0</span>
+        <em>{saving ? "Saving" : existingRating === null && !dirty ? `${DEFAULT_UNRATED_SCORE.toFixed(1)} default if untouched` : "Saved for finale"}</em>
+        <span>5</span>
+      </div>
+    </div>
   );
 }
 
@@ -1288,6 +1364,7 @@ function SpotifyHeaderAction({ state, participantToken }: { state: PartyState; p
         getOAuthToken: (callback) => callback(accessToken),
         volume: 0.8,
       });
+      activeSpotifyPlayer = player;
 
       player.addListener("ready", ({ device_id: deviceId }) => {
         void setSpotifyDevice(state.party.id, participantToken, deviceId)
@@ -1335,6 +1412,8 @@ function SpotifyHeaderAction({ state, participantToken }: { state: PartyState; p
 
     return () => {
       cancelled = true;
+      if (activeSpotifyPlayer === player) activeSpotifyPlayer = null;
+      void player?.pause?.().catch(() => undefined);
       player?.disconnect();
     };
   }, [hasStreamingScope, participantToken, state.party.id, status?.configured, status?.connected, status?.playbackReady]);
@@ -1374,13 +1453,15 @@ function SpotifyHeaderAction({ state, participantToken }: { state: PartyState; p
 
 function BallotPreview({
   heroTrack,
-  topTracks,
+  ratedTracks,
+  ratingCount,
   savedCount,
   ownPosition,
   onOpenRanking,
 }: {
   heroTrack: Track | null;
-  topTracks: Track[];
+  ratedTracks: Array<{ track: Track; rating: number }>;
+  ratingCount: number;
   savedCount: number;
   ownPosition: number | null;
   onOpenRanking: () => void;
@@ -1389,33 +1470,33 @@ function BallotPreview({
     <section className="ballot-preview-card ballot-preview-rich">
       <div className="side-card-header">
         <div className="min-w-0">
-          <p className="side-card-kicker">Your Top 3</p>
-          <h3>Current ballot</h3>
+          <p className="side-card-kicker">Your ratings</p>
+          <h3>Current scores</h3>
           <p className="side-card-copy">
-            {ownPosition ? `You're ${ordinal(ownPosition)} in queue.` : savedCount ? `${savedCount} saved track${savedCount === 1 ? "" : "s"} so far.` : "Tap any slot to edit your ballot."}
+            {ownPosition ? `You're ${ordinal(ownPosition)} in queue.` : savedCount ? `${savedCount} saved track${savedCount === 1 ? "" : "s"} so far.` : `Unrated songs count as ${DEFAULT_UNRATED_SCORE.toFixed(1)}.`}
           </p>
         </div>
         <button className="side-card-open" onClick={onOpenRanking}>
-          Edit
+          Rate
         </button>
       </div>
       <div className="ballot-art-row">
         <TrackArtwork track={heroTrack} size="small" />
         <div className="ballot-status-card">
-          <Trophy className="h-4 w-4 text-nero-live" />
-          <strong>{topTracks.length}/3 locked</strong>
+          <SlidersHorizontal className="h-4 w-4 text-nero-live" />
+          <strong>{ratingCount} rated</strong>
         </div>
       </div>
       <div className="ballot-rank-list">
         {[0, 1, 2].map((index) => {
-          const track = topTracks[index];
+          const rated = ratedTracks[index];
           return (
-            <button key={track?.id ?? `side-empty-${index}`} className="ballot-rank-row" onClick={onOpenRanking}>
-              <span>{index + 1}</span>
+            <button key={rated?.track.id ?? `side-empty-${index}`} className="ballot-rank-row" onClick={onOpenRanking}>
+              <span>{rated ? rated.rating.toFixed(1) : "--"}</span>
               <div className="min-w-0">
-                <strong>{track?.title ?? "Open slot"}</strong>
+                <strong>{rated?.track.title ?? "No rating yet"}</strong>
               </div>
-              <em>Edit</em>
+              <em>Rate</em>
               <ChevronRight className="h-4 w-4 text-white/35" />
             </button>
           );
@@ -1495,10 +1576,8 @@ function SavedSongsPanel({ state, participant, onFlash }: { state: PartyState; p
 
 function LeaderboardPreview({ state, projectedWinners }: { state: PartyState; projectedWinners: ReturnType<typeof getProjectedWinners> }) {
   const leaders = state.party.status === "finalized" ? state.winners.slice(0, 3) : projectedWinners.slice(0, 3);
-  const ballotCount =
-    state.party.status === "finalized"
-      ? new Set(state.ranking.map((entry) => entry.participantId)).size
-      : new Set(state.ranking.filter((entry) => entry.rank <= 3).map((entry) => entry.participantId)).size;
+  const explicitRatingCount = state.ranking.length;
+  const ratedParticipantCount = new Set(state.ranking.map((entry) => entry.participantId)).size;
 
   return (
     <section className="leaderboard-card leaderboard-card-rich">
@@ -1512,11 +1591,11 @@ function LeaderboardPreview({ state, projectedWinners }: { state: PartyState; pr
         </div>
       </div>
       <div className="leaderboard-meta">
-        <span>{ballotCount} ballots</span>
-        <span>5 / 3 / 1</span>
+        <span>{explicitRatingCount} ratings</span>
+        <span>{DEFAULT_UNRATED_SCORE.toFixed(1)} default</span>
       </div>
       <div className="leaderboard-meter" aria-hidden>
-        <span style={{ width: `${Math.min(100, ballotCount * 18)}%` }} />
+        <span style={{ width: `${Math.min(100, ratedParticipantCount * 18)}%` }} />
       </div>
       <div className="mt-3 grid gap-2">
         {leaders.length ? (
@@ -1524,13 +1603,13 @@ function LeaderboardPreview({ state, projectedWinners }: { state: PartyState; pr
             <div key={leader.trackId} className="leaderboard-row">
               <span>{index + 1}</span>
               <strong>{leader.title}</strong>
-              <small>{leader.score} pts</small>
+              <small>{formatRating(leader.score)} avg</small>
             </div>
           ))
         ) : (
           <div className="leaderboard-empty">
             <Trophy className="h-5 w-5 text-nero-live" />
-            <span>Top 3 picks appear here as people rank songs.</span>
+            <span>Ratings appear here as people score songs.</span>
           </div>
         )}
       </div>
@@ -1626,7 +1705,7 @@ function HostControls({
         >
           {busyAction === "skip" ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4 fill-current" />}
         </button>
-        <button className="secondary-button" disabled={!canEnd || Boolean(busyAction)} onClick={() => void common("end", () => finalizeParty(state.party.id, participantToken), "Game ended. Final ballot locked.")}>
+        <button className="secondary-button" disabled={!canEnd || Boolean(busyAction)} onClick={() => void common("end", () => finalizeParty(state.party.id, participantToken), "Game ended. Final ratings locked.")}>
           {busyAction === "end" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trophy className="h-4 w-4" />}
           {busyAction === "end" ? "Ending" : "End Game"}
         </button>
@@ -1675,7 +1754,7 @@ function ConfirmLeaveModal({ onCancel, onConfirm }: { onCancel: () => void; onCo
         </div>
         <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-nero-live">Leave room</p>
         <h2 className="mt-2 text-3xl font-light leading-none">Leave this listening party?</h2>
-        <p className="mt-3 text-sm leading-6 text-white/58">Your saved tracks and Top 3 stay in the room, but this browser will forget its participant token.</p>
+        <p className="mt-3 text-sm leading-6 text-white/58">Your saved tracks and ratings stay in the room, but this browser will forget its participant token.</p>
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button className="secondary-button" onClick={onCancel}>
             Stay
@@ -1743,7 +1822,7 @@ function CompanionRoom({
 }) {
   const listenedTracks = useMemo(() => getListenedTracks(state), [state]);
   const [rankingOpen, setRankingOpen] = useState(false);
-  const topTracks = getParticipantRanking(state, participant.id).map((trackId) => state.tracks.find((track) => track.id === trackId)).filter(Boolean) as Track[];
+  const ratedTracks = getParticipantRatedTracks(state, participant.id).slice(0, 3);
   const isOverlay = surface === "overlay";
   return (
     <section className={`companion-stage z-10 mx-auto flex w-full flex-1 items-center justify-center py-5 ${isOverlay ? "companion-stage-overlay max-w-[620px]" : "max-w-[760px]"}`}>
@@ -1796,18 +1875,18 @@ function CompanionRoom({
 
           <div className="remote-top3-card">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-nero-live">My Top 3</p>
-              <button className="tiny-button h-8 w-8" onClick={() => setRankingOpen(true)} title="Edit Top 3" aria-label="Edit Top 3">
-                <Trophy className="h-4 w-4 text-nero-live" />
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-nero-live">My ratings</p>
+              <button className="tiny-button h-8 w-8" onClick={() => setRankingOpen(true)} title="Rate songs" aria-label="Rate songs">
+                <SlidersHorizontal className="h-4 w-4 text-nero-live" />
               </button>
             </div>
             <div className="grid gap-2">
               {[0, 1, 2].map((index) => {
-                const track = topTracks[index];
+                const rated = ratedTracks[index];
                 return (
-                  <button key={track?.id ?? `companion-empty-${index}`} className="remote-rank-row" onClick={() => setRankingOpen(true)}>
-                    <span>{index + 1}</span>
-                    <strong>{track?.title ?? "Open slot"}</strong>
+                  <button key={rated?.track.id ?? `companion-empty-${index}`} className="remote-rank-row" onClick={() => setRankingOpen(true)}>
+                    <span>{rated ? rated.rating.toFixed(1) : "--"}</span>
+                    <strong>{rated?.track.title ?? "No rating yet"}</strong>
                   </button>
                 );
               })}
@@ -1817,9 +1896,9 @@ function CompanionRoom({
           {!isOverlay ? (
             <div className="companion-history-strip">
               <div className="min-w-0">
-                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/38">Full ballot</p>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/38">All ratings</p>
                 <p className="truncate text-sm text-white/60">
-                  {listenedTracks.length ? `${listenedTracks.length} listened tracks can be moved in.` : "Listened songs land here once the party starts."}
+                  {listenedTracks.length ? `${listenedTracks.length} listened tracks can be rated.` : "Listened songs land here once the party starts."}
                 </p>
               </div>
               <button className="secondary-button" onClick={() => setRankingOpen(true)}>
@@ -1836,8 +1915,8 @@ function CompanionRoom({
         <AudioLines className="h-4 w-4 text-nero-live" />
       </div>
       {rankingOpen ? (
-        <DrawerLayer title="Your Top 3" eyebrow="Private ranking" onClose={() => setRankingOpen(false)}>
-          <RankingBay state={state} participant={participant} participantToken={participantToken} tracks={listenedTracks} onFlash={onFlash} drawer />
+        <DrawerLayer title="Your Ratings" eyebrow="Private scoring" onClose={() => setRankingOpen(false)}>
+          <RankingBay state={state} participant={participant} participantToken={participantToken} tracks={listenedTracks} onFlash={onFlash} onStateChange={onStateChange} drawer />
         </DrawerLayer>
       ) : null}
     </section>
@@ -1850,6 +1929,7 @@ function RankingBay({
   participantToken,
   tracks,
   onFlash,
+  onStateChange,
   compact = false,
   drawer = false,
 }: {
@@ -1858,104 +1938,39 @@ function RankingBay({
   participantToken: string;
   tracks: Track[];
   onFlash: (flash: Flash) => void;
+  onStateChange: (state: PartyState) => void;
   compact?: boolean;
   drawer?: boolean;
 }) {
-  const rankingIds = getParticipantRanking(state, participant.id);
-  const rankedTracks = rankingIds.map((trackId) => state.tracks.find((track) => track.id === trackId)).filter(Boolean) as Track[];
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-
-  async function commit(nextIds: string[], message = "Top 3 updated.") {
-    try {
-      await updateRanking(participant.id, participantToken, nextIds);
-      onFlash({ tone: "good", message });
-    } catch (error) {
-      onFlash({ tone: "bad", message: getErrorMessage(error) });
-    }
-  }
-
-  function move(trackId: string, offset: number) {
-    const ids = [...rankingIds];
-    const index = ids.indexOf(trackId);
-    const nextIndex = index + offset;
-    if (index < 0 || nextIndex < 0 || nextIndex > ids.length - 1) return;
-    ids.splice(index, 1);
-    ids.splice(nextIndex, 0, trackId);
-    void commit(ids);
-  }
+  const displayedTracks = tracks.length ? tracks : state.tracks.filter((track) => track.status !== "queued");
+  const ratingCount = getParticipantRatings(state, participant.id).length;
 
   return (
     <section className={`${drawer ? "drawer-section top3-drawer-surface" : "room-panel"} ${compact ? "p-3" : "ballot-dock p-4"}`}>
       <div className={`flex items-center justify-between gap-3 ${compact ? "" : "ballot-header"}`}>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Your ballot</p>
-          <h3 className={`${compact ? "text-lg" : "text-xl"} font-semibold`}>Your current Top 3</h3>
+          <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-nero-live">Your ratings</p>
+          <h3 className={`${compact ? "text-lg" : "text-xl"} font-semibold`}>{ratingCount} song{ratingCount === 1 ? "" : "s"} rated</h3>
+          <p className="mt-1 text-sm text-white/50">Slide from 0.0 to 5.0. Unrated songs count as {DEFAULT_UNRATED_SCORE.toFixed(1)}.</p>
         </div>
-        <Trophy className="h-5 w-5 text-nero-live" aria-hidden />
-      </div>
-
-      <div className={`mt-4 grid gap-2 ${compact || drawer ? "" : "md:grid-cols-3"}`}>
-        {[0, 1, 2].map((index) => {
-          const track = rankedTracks[index];
-          return (
-            <div
-              key={track?.id ?? `empty-${index}`}
-              draggable={Boolean(track)}
-              onDragStart={() => setDraggingId(track?.id ?? null)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => {
-                if (!draggingId || !track) return;
-                const ids = [...rankingIds];
-                const from = ids.indexOf(draggingId);
-                const to = ids.indexOf(track.id);
-                if (from < 0 || to < 0) return;
-                ids.splice(from, 1);
-                ids.splice(to, 0, draggingId);
-                void commit(ids);
-              }}
-              className={`ranking-row ${compact ? "" : "ranking-row-dock"} ${track ? "ranking-row-filled" : "ranking-row-empty"}`}
-            >
-              <div className="ranking-rank-mark">#{index + 1}</div>
-              {track ? <TrackThumb track={track} /> : <div className="ranking-empty-art"><Plus className="h-4 w-4" /></div>}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold">{track?.title ?? "Open slot"}</p>
-                <p className="truncate text-xs text-nero-mist">{track?.artist ?? "Select from listened history"}</p>
-              </div>
-              {track ? (
-                <div className="flex items-center gap-1">
-                  <button className="tiny-button" onClick={() => move(track.id, -1)} title="Move up" aria-label="Move up">
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </button>
-                  <button className="tiny-button" onClick={() => move(track.id, 1)} title="Move down" aria-label="Move down">
-                    <ArrowDown className="h-3.5 w-3.5" />
-                  </button>
-                  <GripVertical className="h-4 w-4 text-white/30" />
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
+        <SlidersHorizontal className="h-5 w-5 text-nero-live" aria-hidden />
       </div>
 
       <div className={`${compact ? "mt-4 max-h-52 overflow-y-auto pr-1" : "mt-3"}`}>
-        <div className="grid gap-2">
-          {tracks.length ? (
-            tracks.map((track) => (
-              <button
-                key={track.id}
-                className="history-row history-track-row"
-                onClick={() => commit(putTrackInTopThree(rankingIds, track.id), "Moved into your Top 3.")}
-              >
+        <div className="grid gap-3">
+          {displayedTracks.length ? (
+            displayedTracks.map((track) => (
+              <div key={track.id} className="rating-track-row">
                 <TrackThumb track={track} />
-                <span className="min-w-0 text-left">
+                <div className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{track.title}</span>
                   <span className="block truncate text-xs text-nero-mist">{track.artist}</span>
-                </span>
-                <Plus className="h-4 w-4 text-nero-live" />
-              </button>
+                </div>
+                <RatingSlider state={state} participant={participant} participantToken={participantToken} track={track} onFlash={onFlash} onStateChange={onStateChange} compact />
+              </div>
             ))
           ) : (
-            <div className={`rounded-md border border-dashed border-white/15 px-3 text-sm text-nero-mist ${compact ? "py-4" : "py-3"}`}>Listened songs land here.</div>
+            <div className={`rounded-md border border-dashed border-white/15 px-3 text-sm text-nero-mist ${compact ? "py-4" : "py-3"}`}>Songs can be rated once they start playing.</div>
           )}
         </div>
       </div>
@@ -2338,7 +2353,8 @@ function SubmissionPanel({
 function Winners({ state, onOpenSaved, onLeave }: { state: PartyState; onOpenSaved: () => void; onLeave: () => void }) {
   if (state.party.status !== "finalized") return null;
   const winner = state.winners[0] ?? null;
-  const totalBallots = new Set(state.ranking.map((entry) => entry.participantId)).size;
+  const ratedParticipantCount = new Set(state.ranking.map((entry) => entry.participantId)).size;
+  const explicitRatingCount = state.ranking.length;
   const second = state.winners[1] ?? null;
   const third = state.winners[2] ?? null;
   return (
@@ -2349,23 +2365,26 @@ function Winners({ state, onOpenSaved, onLeave }: { state: PartyState; onOpenSav
 
       <div className="finale-title-block">
         <p>Final Results</p>
-        <h2>{winner ? "Room Winner" : "Ballots Locked"}</h2>
+        <h2>{winner ? "Room Winner" : "Ratings Locked"}</h2>
         <div className="finale-score-note">
-          <span>{totalBallots} ballot{totalBallots === 1 ? "" : "s"} counted</span>
+          <span>{explicitRatingCount} explicit rating{explicitRatingCount === 1 ? "" : "s"}</span>
+          <span>{ratedParticipantCount}/{state.participants.length} listener{state.participants.length === 1 ? "" : "s"} rated</span>
           <span>{state.tracks.length} tracks heard</span>
-          <span>5 / 3 / 1 scoring</span>
+          <span>{DEFAULT_UNRATED_SCORE.toFixed(1)} default</span>
         </div>
       </div>
 
-      {state.winners.length ? (
-        <div className="finale-podium finale-podium-theater">
-          <FinalePodiumCard winner={second} track={second ? state.tracks.find((track) => track.id === second.trackId) ?? null : null} rank={2} />
-          <FinalePodiumCard winner={winner} track={winner ? state.tracks.find((track) => track.id === winner.trackId) ?? null : null} rank={1} />
-          <FinalePodiumCard winner={third} track={third ? state.tracks.find((track) => track.id === third.trackId) ?? null : null} rank={3} />
-        </div>
-      ) : (
-        <div className="source-empty-state mt-10">No Top 3 ballots were submitted before End Game.</div>
-      )}
+      <div className="finale-results-layout">
+        {state.winners.length ? (
+          <div className="finale-podium finale-podium-theater">
+            <FinalePodiumCard winner={second} track={second ? state.tracks.find((track) => track.id === second.trackId) ?? null : null} rank={2} />
+            <FinalePodiumCard winner={winner} track={winner ? state.tracks.find((track) => track.id === winner.trackId) ?? null : null} rank={1} />
+            <FinalePodiumCard winner={third} track={third ? state.tracks.find((track) => track.id === third.trackId) ?? null : null} rank={3} />
+          </div>
+        ) : (
+          <div className="source-empty-state mt-10">No songs were played before End Game.</div>
+        )}
+      </div>
 
       <div className="finale-actions">
         <button className="primary-button finale-action-primary" onClick={onLeave}>
@@ -2378,8 +2397,32 @@ function Winners({ state, onOpenSaved, onLeave }: { state: PartyState; onOpenSav
         </button>
       </div>
 
+      <aside className="honorable-mentions-card">
+        <div className="side-card-header">
+          <div>
+            <p className="side-card-kicker">All ratings</p>
+            <h3>Every song average</h3>
+          </div>
+          <SlidersHorizontal className="h-5 w-5 text-nero-live" />
+        </div>
+        <div className="honorable-mentions-list">
+          {state.winners.map((result, index) => (
+            <div key={result.trackId} className="honorable-mention-row">
+              <span>{index + 1}</span>
+              <div className="min-w-0">
+                <strong>{result.title}</strong>
+                <small>{result.artist}</small>
+              </div>
+              <em>{formatRating(result.score)}</em>
+              <small>{result.explicitRatingCount ? `${result.explicitRatingCount} rated` : "default"}</small>
+            </div>
+          ))}
+          {!state.winners.length ? <div className="source-empty-state">No rated songs yet.</div> : null}
+        </div>
+      </aside>
+
       <p className="finale-rules-copy">
-        Final ballots use each listener's current Top 3. Tie-breaks go by first-place votes, appearances, then earlier queue position.
+        Final score is the average rating out of 5. Unrated songs receive a neutral {DEFAULT_UNRATED_SCORE.toFixed(1)} from each listener; tie-breaks go by explicit rating count, then 5.0 ratings, then earlier queue position.
       </p>
     </div>
   );
@@ -2408,7 +2451,7 @@ function FinalePodiumCard({
         <TrackArtwork track={track} size="small" />
         <div className="min-w-0">
           <h3>{winner?.title ?? "Open slot"}</h3>
-          <p>{winner?.artist ?? "No ballot entry"}</p>
+          <p>{winner?.artist ?? "No rated entry"}</p>
         </div>
         <div className="finale-card-meta">
           <div>
@@ -2416,9 +2459,9 @@ function FinalePodiumCard({
             <strong>{winner?.submittedByName ?? "Room"}</strong>
           </div>
           <div className="finale-card-score">
-            <strong>{winner?.score ?? 0}</strong>
-            <span>pts</span>
-            <small>{winner ? `${winner.firstPlaceVotes} first-place` : "0 votes"}</small>
+            <strong>{winner ? formatRating(winner.score) : "--"}</strong>
+            <span>avg</span>
+            <small>{winner ? `${winner.explicitRatingCount} rated` : "0 ratings"}</small>
           </div>
         </div>
       </div>
@@ -2427,23 +2470,26 @@ function FinalePodiumCard({
 }
 
 function getProjectedWinners(state: PartyState) {
-  const grouped = new Map<string, Ballot["ranks"]>();
+  const grouped = new Map<string, Ballot["ratings"]>();
   state.ranking.forEach((entry) => {
-    if (entry.rank > 3) return;
-    const ranks = grouped.get(entry.participantId) ?? [];
-    ranks.push({ trackId: entry.trackId, rank: entry.rank });
-    grouped.set(entry.participantId, ranks);
+    const ratings = grouped.get(entry.participantId) ?? [];
+    ratings.push({ trackId: entry.trackId, rating: entry.rating });
+    grouped.set(entry.participantId, ratings);
   });
 
   const ballots: Ballot[] = [...grouped.entries()]
-    .filter(([, ranks]) => ranks.length)
-    .map(([participantId, ranks]) => ({
+    .filter(([, ratings]) => ratings.length)
+    .map(([participantId, ratings]) => ({
       participantId,
-      ranks: ranks.sort((left, right) => left.rank - right.rank).slice(0, 3),
+      ratings,
       submittedAt: new Date().toISOString(),
     }));
 
-  return scoreBallots(state.tracks, ballots);
+  return scoreRatings(
+    state.tracks.filter((track) => track.status === "played" || track.status === "playing"),
+    ballots,
+    { eligibleVoterCount: state.participants.length },
+  );
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -2467,11 +2513,28 @@ function FlashBanner({ flash, onDismiss }: { flash: NonNullable<Flash>; onDismis
   );
 }
 
-function getParticipantRanking(state: PartyState, participantId: string) {
+function getParticipantRatings(state: PartyState, participantId: string) {
   return state.ranking
     .filter((entry) => entry.participantId === participantId)
-    .sort((a, b) => a.rank - b.rank)
-    .map((entry) => entry.trackId);
+    .sort((a, b) => b.rating - a.rating || getTrackQueuePosition(state, a.trackId) - getTrackQueuePosition(state, b.trackId));
+}
+
+function getParticipantRatedTracks(state: PartyState, participantId: string) {
+  const trackById = new Map(state.tracks.map((track) => [track.id, track]));
+  return getParticipantRatings(state, participantId)
+    .map((entry) => {
+      const track = trackById.get(entry.trackId);
+      return track ? { track, rating: entry.rating } : null;
+    })
+    .filter(Boolean) as Array<{ track: Track; rating: number }>;
+}
+
+function getTrackRating(state: PartyState, participantId: string, trackId: string) {
+  return state.ranking.find((entry) => entry.participantId === participantId && entry.trackId === trackId)?.rating ?? null;
+}
+
+function getTrackQueuePosition(state: PartyState, trackId: string) {
+  return state.tracks.find((track) => track.id === trackId)?.queuePosition ?? Number.MAX_SAFE_INTEGER;
 }
 
 function getListenedTracks(state: PartyState) {
@@ -2523,6 +2586,18 @@ function downloadTextFile(fileName: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function stopBrowserPlayback(audio: HTMLAudioElement | null) {
+  if (audio) {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }
+  const player = activeSpotifyPlayer;
+  activeSpotifyPlayer = null;
+  void player?.pause?.().catch(() => undefined);
+  player?.disconnect();
+}
+
 function getLimitStats(state: PartyState, participantId: string) {
   const totalTracks = state.tracks.length;
   const totalSeconds = state.tracks.reduce((sum, track) => sum + track.durationSeconds, 0);
@@ -2558,6 +2633,10 @@ function formatDurationCompact(seconds: number) {
   }
   if (minutes > 0) return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
   return `${rest}s`;
+}
+
+function formatRating(rating: number) {
+  return normalizeRating(rating).toFixed(1);
 }
 
 function clampInt(value: number, min: number, max: number) {

@@ -124,10 +124,10 @@ export function saveTrack(participantId: string, participantToken: string, track
   });
 }
 
-export function updateRanking(participantId: string, participantToken: string, trackIds: string[]) {
-  return request<{ state: PartyState }>(`/api/participants/${participantId}/ranking`, {
+export function rateTrack(participantId: string, participantToken: string, trackId: string, rating: number) {
+  return request<{ state: PartyState }>(`/api/participants/${participantId}/rating`, {
     method: "PUT",
-    body: JSON.stringify({ participantToken, trackIds }),
+    body: JSON.stringify({ participantToken, trackId, rating }),
   });
 }
 

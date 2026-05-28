@@ -124,12 +124,11 @@ model RankingEntry {
   id            String @id @default(cuid())
   participantId String
   trackId       String
-  rank          Int
+  ratingTenth   Int    @map("rank")
 
   participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
   track       Track       @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
-  @@unique([participantId, rank])
   @@unique([participantId, trackId])
 }
 

@@ -6,7 +6,7 @@ Nero Party is a private-beta music game for full-song listening parties. It is b
 - `apps/server`: Express, Socket.IO, Prisma, Uploads + Audius playback coordinator, and Spotify listener-device playback.
 - `apps/discord-bot`: Parked for now; not part of the current demo surface.
 - `apps/desktop`: Electron always-on-top overlay for macOS and Windows.
-- `packages/shared`: TypeScript schemas, types, ranking, and scoring.
+- `packages/shared`: TypeScript schemas, types, ratings, and scoring.
 - `packages/player`: Upload, Audius, and optional Spotify source adapters.
 
 Hard source policy: production full songs come from user uploads, Audius streams, or each listener's own Spotify playback device. Nero does not extract YouTube audio, rip video platforms, or rebroadcast hidden catalog audio.
@@ -39,7 +39,7 @@ Key variables:
 - `PUBLIC_WEB_URL` / `NERO_WEB_URL`: web surface used by overlay and follow-up links.
 - `AUDIUS_API_BASE`: Audius API base.
 - `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REDIRECT_URI`: Spotify OAuth for listener-device playback. Add the redirect URI in the Spotify Developer Dashboard.
-- `SPOTIFY_SCOPES`: defaults to `streaming user-modify-playback-state user-read-playback-state user-read-currently-playing`.
+- `SPOTIFY_SCOPES`: defaults to `streaming user-read-email user-read-private user-modify-playback-state user-read-playback-state user-read-currently-playing`. Reconnect Spotify after changing scopes.
 
 ## Product Flows
 
@@ -49,19 +49,19 @@ Join Party: guests join by web link. Desktop deep links remain a production foll
 
 Full Song Submission: Audius search, Spotify search, or MP3/WAV/FLAC/AAC/MP4 upload when enabled by the host. The API enforces per-listener, room song, source, and total-duration limits. Uploaded files are served by the API locally and should move to Supabase Storage or R2/S3 in production.
 
-Spotify Listener Playback: each listener who wants Spotify audio connects their own Premium, allowlisted Spotify account and opens Spotify on their playback device. When a Spotify track starts or advances, Nero sends the same track URI to each linked listener device.
+Spotify Listener Playback: each listener who wants Spotify audio connects their own Premium, allowlisted Spotify account. The web app creates a Spotify Web Playback SDK browser device when possible, then Nero starts the same track URI on each linked listener device.
 
-Simple Background Flow: the overlay shows now playing, `Save`, `Top 3`, and the user's current ballot.
+Simple Background Flow: the overlay shows now playing, `Save`, and a responsive 0.0-5.0 rating slider.
 
-Full Ranking Flow: Focus Mode includes a ranking bay where listened songs can be inserted, dragged, and reordered.
+Full Rating Flow: Focus Mode includes a rating bay where listened songs can be scored in 0.1 increments.
 
-Finale: each participant's current Top 3 becomes the ballot. Scoring is 5/3/1 with tie-breaks by first-place votes, appearances, then earlier queue position.
+Finale: each played song is scored by average rating. Missing ratings count as a neutral `3.0`, so one perfect rating cannot beat a broadly loved song. Tie-breaks use explicit rating count, then 5.0 ratings, then earlier queue position.
 
 ## Visual Direction
 
 These design reference mockups are direction-finding artifacts, not production UI assets. Use them for composition, density, mood, and interaction shape only. Do not ship their placeholder artists, album art, logos, or platform-like content.
 
-The strongest implementation anchors are the Focus listening room, Add song modal, Top 3 drawer, Final reveal, and Desktop overlay. See the full notes in [docs/design/reference-mockups/README.md](docs/design/reference-mockups/README.md).
+The strongest implementation anchors are the Focus listening room, Add song modal, rating drawer, Final reveal, and Desktop overlay. See the full notes in [docs/design/reference-mockups/README.md](docs/design/reference-mockups/README.md).
 
 <table>
   <tr>
@@ -80,8 +80,8 @@ The strongest implementation anchors are the Focus listening room, Add song moda
       <img src="docs/design/reference-mockups/03-add-song-modal.png" alt="Add song modal mockup" width="420" />
     </td>
     <td width="50%">
-      <strong>Top 3 drawer</strong><br />
-      <img src="docs/design/reference-mockups/04-top3-drawer.png" alt="Top 3 drawer mockup" width="420" />
+      <strong>Rating drawer</strong><br />
+      <img src="docs/design/reference-mockups/04-top3-drawer.png" alt="Rating drawer mockup" width="420" />
     </td>
   </tr>
   <tr>
@@ -118,7 +118,7 @@ Non-goal: Nero should not inject into games, hook graphics APIs, scrape protecte
 
 ## TODO
 
-- [ ] Tighten the in-room overlay preview so it uses real party state, keeps only now playing, `Save`, `Top 3`, current ballot, collapse state, and the minimum settings needed to prove the concept.
+- [ ] Tighten the in-room overlay preview so it uses real party state, keeps only now playing, `Save`, rating, collapse state, and the minimum settings needed to prove the concept.
 - [ ] Web global overlay follow-up: implement Chrome Document Picture-in-Picture using the same companion/overlay component, with a clear browser-support fallback back to the in-room preview.
 - [ ] Native overlay follow-up: keep Electron for production-grade macOS/Windows overlay distribution, including global `Alt+X` / `Option+X`, tray/menu-bar controls, click-through, opacity, deep links, auto-launch, and persisted overlay settings.
 - [ ] Overlay validation pass: test over a real game or fullscreen/borderless app, verify focus changes do not break party state, and confirm the collapsed pill does not block gameplay.

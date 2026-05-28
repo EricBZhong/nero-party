@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import {
   createPartySchema,
   defaultPartySettings,
-  normalizeRanking,
-  putTrackInTopThree,
-  scoreBallots,
+  normalizeRating,
+  ratingToTenths,
+  scoreRatings,
+  tenthsToRating,
   type Ballot,
   type Track,
 } from "./index.js";
@@ -17,23 +18,34 @@ const tracks = [
 ];
 
 const ballots: Ballot[] = [
-  { participantId: "p1", submittedAt: new Date().toISOString(), ranks: normalizeRanking(["b", "a", "c"]) },
-  { participantId: "p2", submittedAt: new Date().toISOString(), ranks: normalizeRanking(["a", "b", "c"]) },
-  { participantId: "p3", submittedAt: new Date().toISOString(), ranks: normalizeRanking(["b", "c", "a"]) },
+  { participantId: "p1", submittedAt: new Date().toISOString(), ratings: [{ trackId: "b", rating: 4.9 }, { trackId: "a", rating: 3.1 }] },
+  { participantId: "p2", submittedAt: new Date().toISOString(), ratings: [{ trackId: "a", rating: 4.8 }, { trackId: "b", rating: 4.2 }] },
+  { participantId: "p3", submittedAt: new Date().toISOString(), ratings: [{ trackId: "b", rating: 5 }, { trackId: "c", rating: 0 }] },
 ];
 
-assert.deepEqual(putTrackInTopThree(["a", "b", "c"], "d"), ["d", "a", "b"]);
-assert.deepEqual(putTrackInTopThree(["a", "b", "c"], "b"), ["b", "a", "c"]);
-assert.deepEqual(normalizeRanking(["a", "a", "b", "c", "d"]), [
-  { trackId: "a", rank: 1 },
-  { trackId: "b", rank: 2 },
-  { trackId: "c", rank: 3 },
-]);
+assert.equal(normalizeRating(4.24), 4.2);
+assert.equal(normalizeRating(4.25), 4.3);
+assert.equal(normalizeRating(7), 5);
+assert.equal(ratingToTenths(4.26), 43);
+assert.equal(tenthsToRating(41), 4.1);
 
-const [winner] = scoreBallots(tracks, ballots);
+const [winner] = scoreRatings(tracks, ballots);
 assert.equal(winner.trackId, "b");
-assert.equal(winner.score, 13);
-assert.equal(winner.firstPlaceVotes, 2);
+assert.equal(winner.score, 4.7);
+assert.equal(winner.ratingCount, 3);
+assert.equal(winner.explicitRatingCount, 3);
+assert.equal(winner.defaultRatingCount, 0);
+assert.equal(winner.totalRating, 14.1);
+assert.equal(winner.firstPlaceVotes, 1);
+const cResult = scoreRatings(tracks, ballots, { eligibleVoterCount: 3 }).find((result) => result.trackId === "c");
+assert.equal(cResult?.score, 2);
+assert.equal(cResult?.explicitRatingCount, 1);
+assert.equal(cResult?.defaultRatingCount, 2);
+assert.equal(cResult?.totalRating, 6);
+const unratedResult = scoreRatings(tracks, ballots, { eligibleVoterCount: 3 }).find((result) => result.trackId === "d");
+assert.equal(unratedResult?.score, 3);
+assert.equal(unratedResult?.explicitRatingCount, 0);
+assert.equal(unratedResult?.defaultRatingCount, 3);
 assert.equal(defaultPartySettings().maxDurationMinutes, 45);
 assert.equal(
   createPartySchema.parse({
